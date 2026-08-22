@@ -38,6 +38,17 @@ export type OpenCodeQuestionRejectedEvent = {
   properties: { sessionID: string; requestID: string };
 };
 
+export type OpenCodeMessagePartDeltaEvent = {
+  type: "message.part.delta";
+  properties: {
+    sessionID: string;
+    messageID: string;
+    partID: string;
+    field: string;
+    delta: string;
+  };
+};
+
 export type OpenCodeAssistantResult = {
   messageId: string;
   parts: Part[];
@@ -326,6 +337,7 @@ export type OpenCodeEvent =
   | Event
   | OpenCodeQuestionAskedEvent
   | OpenCodeQuestionRepliedEvent
-  | OpenCodeQuestionRejectedEvent;
+  | OpenCodeQuestionRejectedEvent
+  | OpenCodeMessagePartDeltaEvent;
 
 export type BridgeGlobalEvent = Omit<GlobalEvent, "payload"> & { payload: OpenCodeEvent };
