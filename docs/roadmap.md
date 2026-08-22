@@ -21,6 +21,8 @@
 
 ## Phase 2 — Operator UX
 
+Status: **Complete (2026-08-22)**
+
 - Optional buffered streaming/edit of assistant text with a conservative Discord update cadence.
 - Tool-call summaries with redaction rules.
 - Attachments and OpenCode file-part support.
