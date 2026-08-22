@@ -153,16 +153,12 @@ describe("AssistantStreamingPublisher", () => {
 
 function fakeTransport() {
   return {
-    post: vi.fn(
-      async (_route: string, _options: { body: { content: string } }) => ({
-        id: "discord_preview_1",
-      }),
-    ),
-    patch: vi.fn(
-      async (_route: string, _options: { body: { content: string } }) => ({
-        id: "discord_preview_1",
-      }),
-    ),
+    post: vi.fn(async (_route: string, _options: { body: { content: string } }) => ({
+      id: "discord_preview_1",
+    })),
+    patch: vi.fn(async (_route: string, _options: { body: { content: string } }) => ({
+      id: "discord_preview_1",
+    })),
   } satisfies DiscordMessageTransport;
 }
 
