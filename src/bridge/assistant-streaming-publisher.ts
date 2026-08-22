@@ -138,7 +138,6 @@ export class AssistantStreamingPublisher {
       if (!result || result.messageId === binding.lastPublishedAssistantMessageId) return;
 
       const rendered = renderAssistantResult(result.parts);
-      let previewEditFailed = false;
       await deliverCanonicalAssistantResult({
         rendered,
         send: async (content) =>
@@ -148,12 +147,10 @@ export class AssistantStreamingPublisher {
             body: { content },
           }),
         onPreviewEditError: (error) => {
-          previewEditFailed = true;
           console.error(`Failed to promote streaming preview for ${sessionId}`, error);
         },
       });
 
-      if (previewEditFailed) return;
       await this.#state.updateLastPublished(binding.threadId, result.messageId);
     } finally {
       this.#buffer.clearSession(sessionId);
