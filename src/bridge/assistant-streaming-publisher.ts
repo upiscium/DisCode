@@ -13,10 +13,15 @@ type PreviewState = {
   content: string;
 };
 
+export type DiscordMessageTransport = {
+  post(route: string, options: { body: { content: string } }): Promise<unknown>;
+  patch(route: string, options: { body: { content: string } }): Promise<unknown>;
+};
+
 export class AssistantStreamingPublisher {
   readonly #enabled: boolean;
   readonly #state: StateStore;
-  readonly #rest: REST;
+  readonly #rest: DiscordMessageTransport;
   readonly #buffer = new AssistantTextStreamBuffer();
   readonly #flusher: CoalescedSessionFlusher;
   readonly #previews = new Map<string, PreviewState>();
@@ -26,10 +31,11 @@ export class AssistantStreamingPublisher {
     discordToken: string;
     state: StateStore;
     flushIntervalMs?: number;
+    transport?: DiscordMessageTransport;
   }) {
     this.#enabled = options.enabled;
     this.#state = options.state;
-    this.#rest = new REST({ version: "10" }).setToken(options.discordToken);
+    this.#rest = options.transport ?? new REST({ version: "10" }).setToken(options.discordToken);
     this.#flusher = new CoalescedSessionFlusher(options.flushIntervalMs ?? 1000, (sessionId, error) => {
       console.error(`Discord streaming preview failed for ${sessionId}`, error);
     });
