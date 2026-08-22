@@ -4,7 +4,6 @@ import {
   classifyAttachmentMime,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_COUNT,
-  MAX_TOTAL_ATTACHMENT_BYTES,
   prepareDiscordAttachments,
   sanitizeFilename,
   validateAttachmentMetadata,
@@ -24,9 +23,9 @@ describe("Discord attachment policy", () => {
     expect(() =>
       validateDiscordAttachmentUrl("http://cdn.discordapp.com/attachments/123/456/example.txt"),
     ).toThrow(AttachmentValidationError);
-    expect(() => validateDiscordAttachmentUrl("https://cdn.discordapp.com/not-attachments/x")).toThrow(
-      AttachmentValidationError,
-    );
+    expect(() =>
+      validateDiscordAttachmentUrl("https://cdn.discordapp.com/not-attachments/x"),
+    ).toThrow(AttachmentValidationError);
   });
 
   it("sanitizes filenames without using them as paths", () => {
@@ -43,9 +42,11 @@ describe("Discord attachment policy", () => {
       contentType: "text/plain",
       url: "https://cdn.discordapp.com/attachments/1/2/a.txt",
     });
-    expect(() => validateAttachmentMetadata(Array.from({ length: MAX_ATTACHMENT_COUNT + 1 }, () => attachment(1)))).toThrow(
-      /At most/,
-    );
+    expect(() =>
+      validateAttachmentMetadata(
+        Array.from({ length: MAX_ATTACHMENT_COUNT + 1 }, () => attachment(1)),
+      ),
+    ).toThrow(/At most/);
     expect(() => validateAttachmentMetadata([attachment(MAX_ATTACHMENT_BYTES + 1)])).toThrow(
       /10 MiB/,
     );
@@ -77,9 +78,9 @@ describe("attachment MIME classification", () => {
   });
 
   it("normalizes UTF-8 text-like attachments to text/plain", () => {
-    expect(classifyAttachmentMime("application/json", new TextEncoder().encode('{"ok":true}'))).toBe(
-      "text/plain",
-    );
+    expect(
+      classifyAttachmentMime("application/json", new TextEncoder().encode('{"ok":true}')),
+    ).toBe("text/plain");
     expect(classifyAttachmentMime(undefined, new TextEncoder().encode("plain UTF-8 text"))).toBe(
       "text/plain",
     );
@@ -89,9 +90,9 @@ describe("attachment MIME classification", () => {
     expect(() =>
       classifyAttachmentMime("application/zip", Uint8Array.from([0x50, 0x4b, 0x03, 0x04])),
     ).toThrow(/Unsupported attachment type/);
-    expect(() => classifyAttachmentMime(undefined, Uint8Array.from([0xff, 0x00, 0xfe, 0x01]))).toThrow(
-      /Unsupported binary attachment/,
-    );
+    expect(() =>
+      classifyAttachmentMime(undefined, Uint8Array.from([0xff, 0x00, 0xfe, 0x01])),
+    ).toThrow(/Unsupported binary attachment/);
   });
 });
 
@@ -167,10 +168,15 @@ describe("prepareDiscordAttachments", () => {
       url: "https://cdn.discordapp.com/attachments/1/2/large.txt",
     };
     await expect(
-      prepareDiscordAttachments([metadata], async () =>
-        new Response("x", {
-          headers: { "content-length": String(MAX_ATTACHMENT_BYTES + 1), "content-type": "text/plain" },
-        }),
+      prepareDiscordAttachments(
+        [metadata],
+        async () =>
+          new Response("x", {
+            headers: {
+              "content-length": String(MAX_ATTACHMENT_BYTES + 1),
+              "content-type": "text/plain",
+            },
+          }),
       ),
     ).rejects.toThrow(/10 MiB/);
   });
