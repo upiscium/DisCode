@@ -74,20 +74,7 @@ describe("AssistantStreamingPublisher", () => {
       transport,
       flushIntervalMs: 1000,
     });
-    const gateway = {
-      latestAssistantResult: vi.fn(async () => ({
-        messageId: "msg_1",
-        parts: [
-          {
-            id: "prt_final",
-            sessionID: "ses_1",
-            messageID: "msg_1",
-            type: "text",
-            text: "Hello world!",
-          },
-        ],
-      })),
-    } as unknown as Pick<OpenCodeGateway, "latestAssistantResult">;
+    const gateway = finalResultGateway();
 
     await publisher.handleEvent(assistantMessageEvent(), gateway);
     await publisher.handleEvent(textPartEvent(""), gateway);
@@ -115,6 +102,26 @@ describe("AssistantStreamingPublisher", () => {
     expect(binding.lastPublishedAssistantMessageId).toBe("msg_1");
   });
 
+  it("leaves idle finalization to the existing Bridge when no preview survived a restart", async () => {
+    const binding = testBinding();
+    const state = {
+      getBySession: () => ({ ...binding }),
+      updateLastPublished: vi.fn(async () => undefined),
+    };
+    const gateway = finalResultGateway();
+    const publisher = new AssistantStreamingPublisher({
+      enabled: true,
+      discordToken: "unused-test-token",
+      state,
+      transport: fakeTransport(),
+    });
+
+    await publisher.handleEvent(idleEvent(), gateway);
+
+    expect(gateway.latestAssistantResult).not.toHaveBeenCalled();
+    expect(state.updateLastPublished).not.toHaveBeenCalled();
+  });
+
   it("preserves Phase 1 final-only behavior when streaming is disabled", async () => {
     vi.useFakeTimers();
     const binding = testBinding();
@@ -123,9 +130,7 @@ describe("AssistantStreamingPublisher", () => {
       updateLastPublished: vi.fn(async () => undefined),
     };
     const transport = fakeTransport();
-    const gateway = {
-      latestAssistantResult: vi.fn(),
-    } as unknown as Pick<OpenCodeGateway, "latestAssistantResult">;
+    const gateway = finalResultGateway();
     const publisher = new AssistantStreamingPublisher({
       enabled: false,
       discordToken: "unused-test-token",
@@ -147,14 +152,28 @@ describe("AssistantStreamingPublisher", () => {
   });
 });
 
-function fakeTransport(): DiscordMessageTransport & {
-  post: ReturnType<typeof vi.fn>;
-  patch: ReturnType<typeof vi.fn>;
-} {
+function fakeTransport() {
   return {
     post: vi.fn(async () => ({ id: "discord_preview_1" })),
     patch: vi.fn(async () => ({ id: "discord_preview_1" })),
-  };
+  } satisfies DiscordMessageTransport;
+}
+
+function finalResultGateway() {
+  return {
+    latestAssistantResult: vi.fn(async () => ({
+      messageId: "msg_1",
+      parts: [
+        {
+          id: "prt_final",
+          sessionID: "ses_1",
+          messageID: "msg_1",
+          type: "text",
+          text: "Hello world!",
+        },
+      ],
+    })),
+  } as unknown as Pick<OpenCodeGateway, "latestAssistantResult">;
 }
 
 function testBinding(): SessionBinding {
@@ -180,7 +199,7 @@ function assistantMessageEvent(): OpenCodeEvent {
         role: "assistant",
       },
     },
-  } as OpenCodeEvent;
+  } as unknown as OpenCodeEvent;
 }
 
 function textPartEvent(text: string): OpenCodeEvent {
@@ -197,7 +216,7 @@ function textPartEvent(text: string): OpenCodeEvent {
       },
       time: 1,
     },
-  } as OpenCodeEvent;
+  } as unknown as OpenCodeEvent;
 }
 
 function textDeltaEvent(delta: string): OpenCodeEvent {
@@ -210,12 +229,12 @@ function textDeltaEvent(delta: string): OpenCodeEvent {
       field: "text",
       delta,
     },
-  } as OpenCodeEvent;
+  } as unknown as OpenCodeEvent;
 }
 
 function idleEvent(): OpenCodeEvent {
   return {
     type: "session.idle",
     properties: { sessionID: "ses_1" },
-  } as OpenCodeEvent;
+  } as unknown as OpenCodeEvent;
 }
