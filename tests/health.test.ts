@@ -14,11 +14,12 @@ describe("operator health diagnostics", () => {
   });
 
   it("probes authenticated OpenCode health and renders ready", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ healthy: true, version: "1.18.20" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ healthy: true, version: "1.18.20" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
