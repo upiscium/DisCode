@@ -9,6 +9,12 @@ import {
 
 export type OpenCodePermissionResponse = "once" | "always" | "reject";
 
+export type OpenCodePromptFile = {
+  mime: string;
+  filename: string;
+  url: string;
+};
+
 export type OpenCodeQuestion = {
   question: string;
   header: string;
@@ -93,12 +99,31 @@ export class OpenCodeGateway {
   }
 
   async promptAsync(directory: string, sessionId: string, text: string): Promise<void> {
+    await this.promptAsyncWithFiles(directory, sessionId, text, []);
+  }
+
+  async promptAsyncWithFiles(
+    directory: string,
+    sessionId: string,
+    text: string,
+    files: readonly OpenCodePromptFile[],
+  ): Promise<void> {
+    const parts = [
+      ...(text.trim() ? [{ type: "text" as const, text }] : []),
+      ...files.map((file) => ({
+        type: "file" as const,
+        mime: file.mime,
+        filename: file.filename,
+        url: file.url,
+      })),
+    ];
+    if (parts.length === 0)
+      throw new Error("OpenCode prompt must contain text or at least one file");
+
     await this.#client.session.promptAsync({
       path: { id: sessionId },
       query: { directory },
-      body: {
-        parts: [{ type: "text", text }],
-      },
+      body: { parts },
       throwOnError: true,
     });
   }

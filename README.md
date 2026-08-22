@@ -23,6 +23,8 @@ For a multi-question Ask, reply with one line per question; for a multi-select q
 
 Assistant streaming is optional and disabled by default. When `DISCORD_STREAM_ASSISTANT_TEXT=true`, assistant text is buffered and coalesced to a conservative update cadence before a single Discord preview message is edited. Reasoning and successful raw tool output are not streamed. `session.idle` still re-fetches the canonical assistant result and converges the preview to the final `✅ Result`.
 
+Discord attachments can be sent to an idle bound session as OpenCode FileParts. PNG, JPEG, WebP, GIF, PDF, and bounded UTF-8 text-like files are supported. The bridge accepts at most four attachments per message, 10 MiB per attachment, and 20 MiB total. Attachment bytes are fetched only from Discord attachment CDN URLs, validated in memory, converted to data URLs, and never written to the host filesystem. Archives, executables, unsupported binary files, redirects, and invalid media signatures are rejected. A pending Ask remains text-only.
+
 ## Security boundary
 
 Discord is not a remote shell in this design.
@@ -146,7 +148,7 @@ From the configured guild:
 /oc start directory:/home/upiscium/Documents/Programs/Terreate title:Terreate
 ```
 
-The bot creates a thread. From then on, normal text in that thread is sent to that OpenCode session.
+The bot creates a thread. From then on, normal text and supported attachments in that thread are sent to that OpenCode session.
 
 ## Opening the same session in tmux/TUI
 
