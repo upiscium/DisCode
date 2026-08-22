@@ -19,9 +19,15 @@ describe("HostRegistry", () => {
   });
 
   it("rejects invalid, duplicate, and missing default host IDs", () => {
-    expect(() => new HostRegistry("LOCAL", [{ ...host, id: "LOCAL" }])).toThrow(/Invalid OpenCode host ID/);
-    expect(() => new HostRegistry("local", [host, { ...host }])).toThrow(/Duplicate OpenCode host ID/);
-    expect(() => new HostRegistry("missing", [host])).toThrow(/Default OpenCode host is not registered/);
+    expect(() => new HostRegistry("LOCAL", [{ ...host, id: "LOCAL" }])).toThrow(
+      /Invalid OpenCode host ID/,
+    );
+    expect(() => new HostRegistry("local", [host, { ...host }])).toThrow(
+      /Duplicate OpenCode host ID/,
+    );
+    expect(() => new HostRegistry("missing", [host])).toThrow(
+      /Default OpenCode host is not registered/,
+    );
   });
 
   it("does not serialize resolved credentials", () => {
