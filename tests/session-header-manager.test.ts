@@ -25,7 +25,7 @@ async function fixture(options?: { headerMessageId?: string; existingContent?: s
     ...(options?.headerMessageId ? { headerMessageId: options.headerMessageId } : {}),
   });
 
-  const edit = vi.fn(async () => undefined);
+  const edit = vi.fn(async (_options: { content: string; allowedMentions?: unknown }) => undefined);
   const fetchMessage = vi.fn(async () => ({
     id: options?.headerMessageId ?? "header-1",
     content: options?.existingContent ?? "old header",
