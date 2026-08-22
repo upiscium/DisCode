@@ -39,6 +39,7 @@ import {
   lifecycleBlockReason,
   renderLifecycleBlock,
 } from "./session-lifecycle.js";
+import { SessionHeaderManager } from "./session-header-manager.js";
 
 const PERMISSION_PREFIX = "ocperm";
 const QUESTION_PREFIX = "ocquestion";
@@ -53,6 +54,7 @@ export class Bridge {
   readonly #seenPermissions = new Set<string>();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
   readonly #sseMonitor = new OpenCodeSseMonitor();
+  readonly #sessionHeaders: SessionHeaderManager;
 
   constructor(options: {
     config: AppConfig;
@@ -70,6 +72,11 @@ export class Bridge {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
       ],
+    });
+    this.#sessionHeaders = new SessionHeaderManager({
+      discord: this.#discord,
+      state: this.#state,
+      opencode: this.#opencode,
     });
   }
 
@@ -99,6 +106,7 @@ export class Bridge {
       }
     });
     await this.#reconcilePendingQuestions();
+    await this.#reconcileSessionHeaders();
   }
 
   async stop(): Promise<void> {
@@ -221,19 +229,11 @@ export class Bridge {
         createdAt: new Date().toISOString(),
       };
       await this.#state.put(binding);
-      await thread.send(
-        [
-          "🤖 **OpenCode session created**",
-          `Session: \`${session.id}\``,
-          `Directory: \`${escapeInlineCode(directory)}\``,
-          "",
-          "Messages posted in this thread are sent to OpenCode.",
-          "Execution permissions remain governed by OpenCode; Discord does not execute shell commands directly.",
-        ].join("\n"),
-      );
+      await this.#sessionHeaders.createInitialHeader(binding, thread);
       await interaction.editReply(
         `Created <#${thread.id}> for OpenCode session \`${session.id}\`.`,
       );
+      await this.#refreshSessionHeader(binding.sessionId);
     } catch (error) {
       if (thread) {
         await this.#state.remove(thread.id).catch(() => undefined);
@@ -437,14 +437,22 @@ export class Bridge {
   async #consumeOpenCodeEvents(): Promise<void> {
     for await (const globalEvent of this.#opencode.events(this.#abortController.signal)) {
       this.#sseMonitor.observe();
-      await this.#handleOpenCodeEvent(globalEvent.payload).catch((error) => {
+      await this.#handleOpenCodeEvent(globalEvent.payload, globalEvent.directory).catch((error) => {
         console.error(`Failed to handle OpenCode event ${globalEvent.payload.type}`, error);
       });
     }
   }
 
-  async #handleOpenCodeEvent(event: OpenCodeEvent): Promise<void> {
+  async #handleOpenCodeEvent(event: OpenCodeEvent, directory: string): Promise<void> {
     switch (event.type) {
+      case "message.updated":
+        if (event.properties.info.role === "user") {
+          await this.#refreshSessionHeader(event.properties.info.sessionID);
+        }
+        break;
+      case "vcs.branch.updated":
+        await this.#refreshHeadersForDirectory(directory);
+        break;
       case "permission.updated":
         await this.#publishPermission(event);
         break;
@@ -472,6 +480,27 @@ export class Bridge {
         break;
       default:
         break;
+    }
+  }
+
+  async #refreshSessionHeader(sessionId: string): Promise<void> {
+    try {
+      await this.#sessionHeaders.refreshSession(sessionId);
+    } catch (error) {
+      console.error(`Failed to refresh Discord session header for ${sessionId}`, error);
+    }
+  }
+
+  async #refreshHeadersForDirectory(directory: string): Promise<void> {
+    for (const binding of this.#state.list()) {
+      if (binding.directory !== directory) continue;
+      await this.#refreshSessionHeader(binding.sessionId);
+    }
+  }
+
+  async #reconcileSessionHeaders(): Promise<void> {
+    for (const binding of this.#state.list()) {
+      await this.#refreshSessionHeader(binding.sessionId);
     }
   }
 
