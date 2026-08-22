@@ -56,6 +56,7 @@ export class ToolSummaryPublisher {
         if (info.role !== "assistant" || !this.#state.getBySession(info.sessionID)) return;
         if (this.#buffer.currentMessageId(info.sessionID) !== info.id) {
           await this.#flusher.cancelAndDrain(info.sessionID);
+          await this.#flushSummary(info.sessionID);
           this.#messages.delete(info.sessionID);
           this.#buffer.startAssistantMessage(info.sessionID, info.id);
         }
