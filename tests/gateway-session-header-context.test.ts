@@ -52,7 +52,7 @@ describe("OpenCodeGateway session header context", () => {
     });
 
     const fetchMock = vi.fn(
-      async () =>
+      async (_input: unknown) =>
         new Response(JSON.stringify({ branch: "feat/header", default_branch: "main" }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -87,7 +87,7 @@ describe("OpenCodeGateway session header context", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
-        async () =>
+        async (_input: unknown) =>
           new Response(JSON.stringify({}), {
             status: 200,
             headers: { "Content-Type": "application/json" },
