@@ -163,4 +163,30 @@ describe("CoalescedSessionFlusher", () => {
 
     expect(flush).not.toHaveBeenCalled();
   });
+
+  it("waits for an in-flight flush before finalization continues", async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const flush = vi.fn(async () => gate);
+    const flusher = new CoalescedSessionFlusher(1000);
+
+    flusher.request("ses_1", flush);
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+    expect(flush).toHaveBeenCalledTimes(1);
+
+    let drained = false;
+    const draining = flusher.cancelAndDrain("ses_1").then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    release?.();
+    await draining;
+    expect(drained).toBe(true);
+  });
 });
