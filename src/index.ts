@@ -2,9 +2,10 @@ import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { AssistantStreamingPublisher } from "./bridge/assistant-streaming-publisher.js";
 import { Bridge } from "./bridge/bridge.js";
+import { ToolSummaryPublisher } from "./bridge/tool-summary-publisher.js";
 import { loadConfig } from "./config.js";
 import { DirectoryPolicy } from "./domain/directory-policy.js";
-import { StreamingOpenCodeGateway } from "./opencode/streaming-gateway.js";
+import { ObservedOpenCodeGateway } from "./opencode/observed-gateway.js";
 import { StateStore } from "./state/state-store.js";
 
 if (existsSync(".env")) {
@@ -20,11 +21,16 @@ const streamingPublisher = new AssistantStreamingPublisher({
   discordToken: config.discordToken,
   state,
 });
-const opencode = new StreamingOpenCodeGateway({
+const toolSummaryPublisher = new ToolSummaryPublisher({
+  enabled: config.showToolSummaries,
+  discordToken: config.discordToken,
+  state,
+});
+const opencode = new ObservedOpenCodeGateway({
   baseUrl: config.opencodeBaseUrl,
   username: config.opencodeUsername,
   ...(config.opencodePassword ? { password: config.opencodePassword } : {}),
-  publisher: streamingPublisher,
+  observers: [streamingPublisher, toolSummaryPublisher],
 });
 const bridge = new Bridge({ config, policy, state, opencode });
 
