@@ -17,11 +17,7 @@ export class AssistantTextStreamBuffer {
   readonly #parts = new Map<string, TextPartState>();
   readonly #partOrderByMessage = new Map<string, string[]>();
 
-  observeMessage(input: {
-    sessionId: string;
-    messageId: string;
-    role: string;
-  }): void {
+  observeMessage(input: { sessionId: string; messageId: string; role: string }): void {
     if (input.role !== "assistant") return;
     this.#assistantMessages.add(messageKey(input.sessionId, input.messageId));
     this.#latestMessageBySession.set(input.sessionId, input.messageId);
@@ -163,11 +159,12 @@ export class CoalescedSessionFlusher {
       this.#onError(sessionId, error);
     } finally {
       state.running = false;
-      if (this.#states.get(sessionId) !== state) return;
-      if (state.pending) {
-        this.#arm(sessionId, state);
-      } else {
-        this.#states.delete(sessionId);
+      if (this.#states.get(sessionId) === state) {
+        if (state.pending) {
+          this.#arm(sessionId, state);
+        } else {
+          this.#states.delete(sessionId);
+        }
       }
     }
   }
