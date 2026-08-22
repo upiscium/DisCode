@@ -169,9 +169,7 @@ export class OpenCodeGateway {
     requestId: string,
     reply: OpenCodePermissionResponse,
   ): Promise<boolean> {
-    const url = new URL(
-      `${this.#baseUrl}/permission/${encodeURIComponent(requestId)}/reply`,
-    );
+    const url = new URL(`${this.#baseUrl}/permission/${encodeURIComponent(requestId)}/reply`);
     url.searchParams.set("directory", directory);
     const response = await fetch(url, {
       method: "POST",
@@ -183,7 +181,9 @@ export class OpenCodeGateway {
     });
     if (response.status === 404) return false;
     if (!response.ok) {
-      throw new Error(`OpenCode permission API failed: ${response.status} ${await response.text()}`);
+      throw new Error(
+        `OpenCode permission API failed: ${response.status} ${await response.text()}`,
+      );
     }
     return true;
   }
@@ -256,7 +256,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 export function normalizeBridgeGlobalEvent(event: unknown): BridgeGlobalEvent {
