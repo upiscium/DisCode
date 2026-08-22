@@ -75,7 +75,10 @@ describe("SessionHeaderManager", () => {
       model: { providerID: "openai", modelID: "gpt-5.6" },
       branch: "feat/header",
     });
-    const { manager, edit } = await fixture({ headerMessageId: "header-1", existingContent: content });
+    const { manager, edit } = await fixture({
+      headerMessageId: "header-1",
+      existingContent: content,
+    });
 
     await manager.refreshSession("session-1");
 
