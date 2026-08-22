@@ -63,7 +63,8 @@ describe("AssistantStreamingPublisher", () => {
       binding = { ...binding, lastPublishedAssistantMessageId: messageId };
     });
     const state = {
-      getBySession: (sessionId: string) => (sessionId === binding.sessionId ? { ...binding } : undefined),
+      getBySession: (sessionId: string) =>
+        sessionId === binding.sessionId ? { ...binding } : undefined,
       updateLastPublished,
     };
     const transport = fakeTransport();
@@ -95,9 +96,7 @@ describe("AssistantStreamingPublisher", () => {
 
     expect(transport.post).toHaveBeenCalledTimes(1);
     expect(transport.patch).toHaveBeenCalledTimes(2);
-    expect(transport.patch.mock.calls[1]?.[1].body.content).toBe(
-      "✅ **Result**\nHello world!",
-    );
+    expect(transport.patch.mock.calls[1]?.[1].body.content).toBe("✅ **Result**\nHello world!");
     expect(updateLastPublished).toHaveBeenCalledWith("thread_1", "msg_1");
     expect(binding.lastPublishedAssistantMessageId).toBe("msg_1");
   });
