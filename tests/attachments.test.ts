@@ -49,10 +49,12 @@ describe("Discord attachment policy", () => {
     expect(() => validateAttachmentMetadata([attachment(MAX_ATTACHMENT_BYTES + 1)])).toThrow(
       /10 MiB/,
     );
+    const sevenMiB = 7 * 1024 * 1024;
     expect(() =>
       validateAttachmentMetadata([
-        attachment(MAX_TOTAL_ATTACHMENT_BYTES / 2 + 1),
-        attachment(MAX_TOTAL_ATTACHMENT_BYTES / 2),
+        attachment(sevenMiB),
+        attachment(sevenMiB),
+        attachment(sevenMiB),
       ]),
     ).toThrow(/20 MiB/);
   });
