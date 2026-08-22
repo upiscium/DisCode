@@ -30,7 +30,7 @@ const opencode = new ObservedOpenCodeGateway({
   baseUrl: config.opencodeBaseUrl,
   username: config.opencodeUsername,
   ...(config.opencodePassword ? { password: config.opencodePassword } : {}),
-  observers: [streamingPublisher, toolSummaryPublisher],
+  observers: [toolSummaryPublisher, streamingPublisher],
 });
 const bridge = new Bridge({ config, policy, state, opencode });
 
