@@ -22,6 +22,7 @@ import { openCodeCommand } from "../discord/commands.js";
 import { chunkDiscordText, renderAssistantResult, sanitizeThreadName } from "../discord/format.js";
 import { renderHealthDiagnostic } from "../discord/health.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
+import { renderSessionStatus } from "../discord/status.js";
 import type { DirectoryPolicy } from "../domain/directory-policy.js";
 import type { SessionBinding } from "../domain/session-binding.js";
 import { OpenCodeSseMonitor, probeOpenCodeHealth } from "../opencode/diagnostics.js";
@@ -268,7 +269,12 @@ export class Bridge {
     }
     const status = await this.#opencode.status(binding.directory, binding.sessionId);
     await interaction.reply({
-      content: `Session \`${binding.sessionId}\`: **${status?.type ?? "idle"}**`,
+      content: renderSessionStatus({
+        sessionId: binding.sessionId,
+        status: status?.type ?? "idle",
+        directory: binding.directory,
+        baseUrl: this.#config.opencodeBaseUrl,
+      }),
       flags: MessageFlags.Ephemeral,
     });
   }
