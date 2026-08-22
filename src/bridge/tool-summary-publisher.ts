@@ -68,17 +68,18 @@ export class ToolSummaryPublisher {
         if (!binding) return;
         const input = isRecord(part.state.input) ? part.state.input : {};
         const timing = toolTiming(part.state);
+        const annotation = safeToolAnnotation({
+          tool: part.tool,
+          input,
+          directory: binding.directory,
+        });
         const changed = this.#buffer.observeTool({
           sessionId: part.sessionID,
           messageId: part.messageID,
           partId: part.id,
           tool: part.tool,
           status: part.state.status,
-          annotation: safeToolAnnotation({
-            tool: part.tool,
-            input,
-            directory: binding.directory,
-          }),
+          ...(annotation ? { annotation } : {}),
           ...timing,
         });
         if (changed) this.#requestFlush(part.sessionID);
