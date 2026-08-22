@@ -51,7 +51,9 @@ export class OpenCodeGateway {
   constructor(options: { baseUrl: string; username: string; password?: string }) {
     const headers: Record<string, string> = {};
     if (options.password) {
-      const credentials = Buffer.from(`${options.username}:${options.password}`, "utf8").toString("base64");
+      const credentials = Buffer.from(`${options.username}:${options.password}`, "utf8").toString(
+        "base64",
+      );
       headers.Authorization = `Basic ${credentials}`;
     }
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -63,19 +65,18 @@ export class OpenCodeGateway {
   }
 
   async createSession(directory: string, title: string): Promise<Session> {
-    return this.#client.session.create({
+    const result = await this.#client.session.create({
       body: { title },
       query: { directory },
-      responseStyle: "data",
       throwOnError: true,
     });
+    return result.data;
   }
 
   async deleteSession(directory: string, sessionId: string): Promise<void> {
     await this.#client.session.delete({
       path: { id: sessionId },
       query: { directory },
-      responseStyle: "data",
       throwOnError: true,
     });
   }
@@ -87,7 +88,6 @@ export class OpenCodeGateway {
       body: {
         parts: [{ type: "text", text }],
       },
-      responseStyle: "data",
       throwOnError: true,
     });
   }
@@ -96,28 +96,28 @@ export class OpenCodeGateway {
     await this.#client.session.abort({
       path: { id: sessionId },
       query: { directory },
-      responseStyle: "data",
       throwOnError: true,
     });
   }
 
   async status(directory: string, sessionId: string): Promise<SessionStatus | undefined> {
-    const statuses = await this.#client.session.status({
+    const result = await this.#client.session.status({
       query: { directory },
-      responseStyle: "data",
       throwOnError: true,
     });
-    return statuses[sessionId];
+    return result.data[sessionId];
   }
 
-  async latestAssistantResult(directory: string, sessionId: string): Promise<OpenCodeAssistantResult | undefined> {
-    const messages = await this.#client.session.messages({
+  async latestAssistantResult(
+    directory: string,
+    sessionId: string,
+  ): Promise<OpenCodeAssistantResult | undefined> {
+    const result = await this.#client.session.messages({
       path: { id: sessionId },
       query: { directory, limit: 20 },
-      responseStyle: "data",
       throwOnError: true,
     });
-    const latest = [...messages].reverse().find((message) => message.info.role === "assistant");
+    const latest = [...result.data].reverse().find((message) => message.info.role === "assistant");
     if (!latest) return undefined;
     return { messageId: latest.info.id, parts: latest.parts };
   }
@@ -132,18 +132,25 @@ export class OpenCodeGateway {
       path: { id: sessionId, permissionID: permissionId },
       query: { directory },
       body: { response },
-      responseStyle: "data",
       throwOnError: true,
     });
   }
 
-
   async replyQuestion(directory: string, requestId: string, answers: string[][]): Promise<void> {
-    await this.#requestQuestion("POST", `/question/${encodeURIComponent(requestId)}/reply`, directory, { answers });
+    await this.#requestQuestion(
+      "POST",
+      `/question/${encodeURIComponent(requestId)}/reply`,
+      directory,
+      { answers },
+    );
   }
 
   async rejectQuestion(directory: string, requestId: string): Promise<void> {
-    await this.#requestQuestion("POST", `/question/${encodeURIComponent(requestId)}/reject`, directory);
+    await this.#requestQuestion(
+      "POST",
+      `/question/${encodeURIComponent(requestId)}/reject`,
+      directory,
+    );
   }
 
   async listQuestions(directory: string): Promise<OpenCodeQuestionRequest[]> {
