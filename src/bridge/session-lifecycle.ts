@@ -1,12 +1,15 @@
 export type LifecycleStatus = "busy" | "retry" | "idle" | undefined;
-export type LifecycleMode = "close" | "unbind";
 
 export type LifecycleBlockReason =
   | { kind: "pending-question" }
   | { kind: "active-session"; status: "busy" | "retry" };
 
-export type LifecycleMutationOperations = {
+export type CloseMutationOperations = {
   deleteSession: () => Promise<void>;
+  removeBinding: () => Promise<void>;
+};
+
+export type UnbindMutationOperations = {
   removeBinding: () => Promise<void>;
 };
 
@@ -28,12 +31,11 @@ export function renderLifecycleBlock(reason: LifecycleBlockReason): string {
   return `OpenCode is currently **${reason.status}**. Wait for the current turn to finish or use \`/oc abort\`, then retry.`;
 }
 
-export async function executeLifecycleMutation(
-  mode: LifecycleMode,
-  operations: LifecycleMutationOperations,
-): Promise<void> {
-  if (mode === "close") {
-    await operations.deleteSession();
-  }
+export async function executeCloseMutation(operations: CloseMutationOperations): Promise<void> {
+  await operations.deleteSession();
+  await operations.removeBinding();
+}
+
+export async function executeUnbindMutation(operations: UnbindMutationOperations): Promise<void> {
   await operations.removeBinding();
 }
