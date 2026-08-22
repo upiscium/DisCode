@@ -24,5 +24,15 @@ export const openCodeCommand = new SlashCommandBuilder()
     command.setName("abort").setDescription("Abort this thread's OpenCode session"),
   )
   .addSubcommand((command) =>
+    command
+      .setName("close")
+      .setDescription("Delete this OpenCode session, unbind, and archive the thread"),
+  )
+  .addSubcommand((command) =>
+    command
+      .setName("unbind")
+      .setDescription("Detach this Discord thread without deleting the OpenCode session"),
+  )
+  .addSubcommand((command) =>
     command.setName("health").setDescription("Show OpenCode bridge health and readiness"),
   );

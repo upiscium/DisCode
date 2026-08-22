@@ -32,6 +32,12 @@ import type {
   OpenCodeQuestionRequest,
 } from "../opencode/gateway.js";
 import type { StateStore } from "../state/state-store.js";
+import {
+  executeCloseMutation,
+  executeUnbindMutation,
+  lifecycleBlockReason,
+  renderLifecycleBlock,
+} from "./session-lifecycle.js";
 
 const PERMISSION_PREFIX = "ocperm";
 const QUESTION_PREFIX = "ocquestion";
@@ -165,6 +171,12 @@ export class Bridge {
       case "abort":
         await this.#abort(interaction);
         break;
+      case "close":
+        await this.#close(interaction);
+        break;
+      case "unbind":
+        await this.#unbind(interaction);
+        break;
       case "health":
         await this.#health(interaction);
         break;
@@ -275,6 +287,83 @@ export class Bridge {
       content: `Abort requested for \`${binding.sessionId}\`.`,
       flags: MessageFlags.Ephemeral,
     });
+  }
+
+  async #close(interaction: ChatInputCommandInteraction): Promise<void> {
+    const binding = this.#state.getByThread(interaction.channelId);
+    if (!binding) {
+      await interaction.reply({
+        content: "This is not a bound OpenCode thread.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const status = await this.#opencode.status(binding.directory, binding.sessionId);
+    const blocker = lifecycleBlockReason(
+      status?.type,
+      this.#pendingQuestions.has(binding.sessionId),
+    );
+    if (blocker) {
+      await interaction.editReply(renderLifecycleBlock(blocker));
+      return;
+    }
+
+    await executeCloseMutation({
+      deleteSession: () => this.#opencode.deleteSession(binding.directory, binding.sessionId),
+      removeBinding: () => this.#state.remove(binding.threadId),
+    });
+    this.#pendingQuestions.delete(binding.sessionId);
+
+    await interaction.editReply(
+      `Closed OpenCode session \`${binding.sessionId}\` and removed this Discord binding. Archiving the thread.`,
+    );
+
+    try {
+      const thread = await this.#fetchThread(binding.threadId);
+      if (!thread) throw new Error("Bound Discord thread could not be fetched");
+      await thread.setArchived(true, `OpenCode session ${binding.sessionId} closed`);
+    } catch (error) {
+      await interaction.followUp({
+        content: `The OpenCode session was deleted and unbound, but the Discord thread could not be archived: ${truncate(errorMessage(error), 1200)}`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+  }
+
+  async #unbind(interaction: ChatInputCommandInteraction): Promise<void> {
+    const binding = this.#state.getByThread(interaction.channelId);
+    if (!binding) {
+      await interaction.reply({
+        content: "This is not a bound OpenCode thread.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const status = await this.#opencode.status(binding.directory, binding.sessionId);
+    const blocker = lifecycleBlockReason(
+      status?.type,
+      this.#pendingQuestions.has(binding.sessionId),
+    );
+    if (blocker) {
+      await interaction.editReply(renderLifecycleBlock(blocker));
+      return;
+    }
+
+    await executeUnbindMutation({
+      removeBinding: () => this.#state.remove(binding.threadId),
+    });
+    this.#pendingQuestions.delete(binding.sessionId);
+    await interaction.editReply(
+      [
+        `Unbound this thread from OpenCode session \`${binding.sessionId}\`.`,
+        "The OpenCode session still exists and can continue to be used from the TUI or API.",
+        `Directory: \`${escapeInlineCode(binding.directory)}\``,
+      ].join("\n"),
+    );
   }
 
   async #handleMessage(message: Message): Promise<void> {
