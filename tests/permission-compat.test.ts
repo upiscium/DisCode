@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { normalizeBridgeGlobalEvent } from "../src/opencode/gateway.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { OpenCodeGateway, normalizeBridgeGlobalEvent } from "../src/opencode/gateway.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("OpenCode permission compatibility", () => {
   it("normalizes current permission.asked into the legacy bridge shape", () => {
@@ -74,5 +78,31 @@ describe("OpenCode permission compatibility", () => {
     };
 
     expect(normalizeBridgeGlobalEvent(legacy)).toEqual(legacy);
+  });
+
+  it("uses the current permission reply endpoint before legacy fallback", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
+      return new Response("true", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const gateway = new OpenCodeGateway({
+      baseUrl: "http://127.0.0.1:4096",
+      username: "opencode",
+    });
+    await gateway.replyPermission("/repo", "ses_1", "per_1", "once");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0];
+    expect(String(call?.[0])).toBe(
+      "http://127.0.0.1:4096/permission/per_1/reply?directory=%2Frepo",
+    );
+    expect(call?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ reply: "once" }),
+    });
   });
 });
