@@ -21,10 +21,10 @@ tmux -L "$socket" has-session -t "$tmux_session" 2>/dev/null || {
   exit 1
 }
 
+# OpenCode attach reads OPENCODE_SERVER_PASSWORD / OPENCODE_SERVER_USERNAME
+# from the inherited environment when explicit CLI flags are omitted. Keep
+# credentials out of argv and the tmux window command history.
 attach_args=(opencode attach "$base_url" --session "$opencode_session" --dir "$directory")
-if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
-  attach_args+=(--username "${OPENCODE_SERVER_USERNAME:-opencode}" --password "$OPENCODE_SERVER_PASSWORD")
-fi
 printf -v attach_command '%q ' "${attach_args[@]}"
 tmux -L "$socket" new-window -d -t "$tmux_session" -n "$window_name" "exec $attach_command"
 
