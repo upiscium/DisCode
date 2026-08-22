@@ -67,7 +67,7 @@ export function renderToolActivitySummary(
   }
 
   const rendered = renderSummary(lines, omitted);
-  return rendered.length <= maxLength ? rendered : rendered.slice(0, maxLength - 1).trimEnd() + "…";
+  return rendered.length <= maxLength ? rendered : `${rendered.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function renderSummary(lines: readonly string[], omitted: number): string {
@@ -134,7 +134,12 @@ function safeUrl(value: string): string | undefined {
 }
 
 function sanitizeInline(value: string, maxLength: number): string {
-  const compact = value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  const compact = value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   const markdownSafe = compact.replace(/[\\`*_~>|]/g, "");
-  return markdownSafe.length <= maxLength ? markdownSafe : `${markdownSafe.slice(0, maxLength - 1)}…`;
+  return markdownSafe.length <= maxLength
+    ? markdownSafe
+    : `${markdownSafe.slice(0, maxLength - 1)}…`;
 }
