@@ -1,5 +1,5 @@
 import type { AssistantStreamingPublisher } from "../bridge/assistant-streaming-publisher.js";
-import { OpenCodeGateway, type BridgeGlobalEvent } from "./gateway.js";
+import { type BridgeGlobalEvent, OpenCodeGateway } from "./gateway.js";
 
 export class StreamingOpenCodeGateway extends OpenCodeGateway {
   readonly #publisher: AssistantStreamingPublisher;
@@ -20,7 +20,10 @@ export class StreamingOpenCodeGateway extends OpenCodeGateway {
         try {
           await this.#publisher.handleEvent(event.payload, this);
         } catch (error) {
-          console.error(`Assistant streaming event handling failed for ${event.payload.type}`, error);
+          console.error(
+            `Assistant streaming event handling failed for ${event.payload.type}`,
+            error,
+          );
         }
         yield event;
       }
