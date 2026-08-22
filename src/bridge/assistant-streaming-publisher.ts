@@ -38,9 +38,12 @@ export class AssistantStreamingPublisher {
     this.#enabled = options.enabled;
     this.#state = options.state;
     this.#rest = options.transport ?? new REST({ version: "10" }).setToken(options.discordToken);
-    this.#flusher = new CoalescedSessionFlusher(options.flushIntervalMs ?? 1000, (sessionId, error) => {
-      console.error(`Discord streaming preview failed for ${sessionId}`, error);
-    });
+    this.#flusher = new CoalescedSessionFlusher(
+      options.flushIntervalMs ?? 1000,
+      (sessionId, error) => {
+        console.error(`Discord streaming preview failed for ${sessionId}`, error);
+      },
+    );
   }
 
   async handleEvent(
