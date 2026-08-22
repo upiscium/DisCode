@@ -1,34 +1,18 @@
 import type { AssistantStreamingPublisher } from "../bridge/assistant-streaming-publisher.js";
-import { type BridgeGlobalEvent, OpenCodeGateway } from "./gateway.js";
+import { ObservedOpenCodeGateway } from "./observed-gateway.js";
 
-export class StreamingOpenCodeGateway extends OpenCodeGateway {
-  readonly #publisher: AssistantStreamingPublisher;
-
+export class StreamingOpenCodeGateway extends ObservedOpenCodeGateway {
   constructor(options: {
     baseUrl: string;
     username: string;
     password?: string;
     publisher: AssistantStreamingPublisher;
   }) {
-    super(options);
-    this.#publisher = options.publisher;
-  }
-
-  override async *events(signal?: AbortSignal): AsyncGenerator<BridgeGlobalEvent> {
-    try {
-      for await (const event of super.events(signal)) {
-        try {
-          await this.#publisher.handleEvent(event.payload, this);
-        } catch (error) {
-          console.error(
-            `Assistant streaming event handling failed for ${event.payload.type}`,
-            error,
-          );
-        }
-        yield event;
-      }
-    } finally {
-      this.#publisher.stop();
-    }
+    super({
+      baseUrl: options.baseUrl,
+      username: options.username,
+      ...(options.password ? { password: options.password } : {}),
+      observers: [options.publisher],
+    });
   }
 }
