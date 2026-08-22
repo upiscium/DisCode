@@ -47,19 +47,6 @@ export class SessionHeaderManager {
     await message.edit({ content, allowedMentions: { parse: [] } });
   }
 
-  async refreshDirectory(directory: string): Promise<void> {
-    for (const binding of this.#state.list()) {
-      if (binding.directory !== directory) continue;
-      await this.refreshSession(binding.sessionId);
-    }
-  }
-
-  async reconcile(): Promise<void> {
-    for (const binding of this.#state.list()) {
-      await this.refreshSession(binding.sessionId);
-    }
-  }
-
   async #fetchThread(threadId: string): Promise<ThreadChannel | undefined> {
     const channel = await this.#discord.channels.fetch(threadId);
     return channel?.isThread() ? channel : undefined;
