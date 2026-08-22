@@ -13,6 +13,8 @@ type PreviewState = {
   content: string;
 };
 
+type StreamingStateStore = Pick<StateStore, "getBySession" | "updateLastPublished">;
+
 export type DiscordMessageTransport = {
   post(route: string, options: { body: { content: string } }): Promise<unknown>;
   patch(route: string, options: { body: { content: string } }): Promise<unknown>;
@@ -20,7 +22,7 @@ export type DiscordMessageTransport = {
 
 export class AssistantStreamingPublisher {
   readonly #enabled: boolean;
-  readonly #state: StateStore;
+  readonly #state: StreamingStateStore;
   readonly #rest: DiscordMessageTransport;
   readonly #buffer = new AssistantTextStreamBuffer();
   readonly #flusher: CoalescedSessionFlusher;
@@ -29,7 +31,7 @@ export class AssistantStreamingPublisher {
   constructor(options: {
     enabled: boolean;
     discordToken: string;
-    state: StateStore;
+    state: StreamingStateStore;
     flushIntervalMs?: number;
     transport?: DiscordMessageTransport;
   }) {
