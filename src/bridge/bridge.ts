@@ -6,6 +6,7 @@ import {
   ChannelType,
   type ChatInputCommandInteraction,
   Client,
+  Events,
   GatewayIntentBits,
   type Interaction,
   type Message,
@@ -80,7 +81,7 @@ export class Bridge {
           .catch(() => undefined);
       });
     });
-    this.#discord.once("ready", (client) => {
+    this.#discord.once(Events.ClientReady, (client) => {
       console.log(`Discord connected as ${client.user.tag}`);
     });
 
