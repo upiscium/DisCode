@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  executeLifecycleMutation,
+  executeCloseMutation,
+  executeUnbindMutation,
   lifecycleBlockReason,
   renderLifecycleBlock,
 } from "../src/bridge/session-lifecycle.js";
@@ -37,7 +38,7 @@ describe("session lifecycle policy", () => {
 describe("session lifecycle mutations", () => {
   it("close deletes the OpenCode session before removing the binding", async () => {
     const calls: string[] = [];
-    await executeLifecycleMutation("close", {
+    await executeCloseMutation({
       deleteSession: vi.fn(async () => {
         calls.push("delete-session");
       }),
@@ -52,7 +53,7 @@ describe("session lifecycle mutations", () => {
   it("close preserves the binding when session deletion fails", async () => {
     const removeBinding = vi.fn(async () => undefined);
     await expect(
-      executeLifecycleMutation("close", {
+      executeCloseMutation({
         deleteSession: async () => {
           throw new Error("delete failed");
         },
@@ -63,13 +64,11 @@ describe("session lifecycle mutations", () => {
     expect(removeBinding).not.toHaveBeenCalled();
   });
 
-  it("unbind removes only the binding and never deletes the OpenCode session", async () => {
-    const deleteSession = vi.fn(async () => undefined);
+  it("unbind can only remove the binding", async () => {
     const removeBinding = vi.fn(async () => undefined);
 
-    await executeLifecycleMutation("unbind", { deleteSession, removeBinding });
+    await executeUnbindMutation({ removeBinding });
 
-    expect(deleteSession).not.toHaveBeenCalled();
     expect(removeBinding).toHaveBeenCalledTimes(1);
   });
 });
