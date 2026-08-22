@@ -11,11 +11,17 @@ const baseEnv: NodeJS.ProcessEnv = {
 };
 
 describe("loadConfig", () => {
-  it("parses allowlists and secure permission default", () => {
+  it("parses allowlists and secure feature defaults", () => {
     const config = loadConfig(baseEnv);
     expect([...config.allowedUserIds]).toEqual(["1", "2"]);
     expect(config.allowPermissionAlways).toBe(false);
+    expect(config.streamAssistantText).toBe(false);
     expect(config.opencodeBaseUrl).toBe("http://127.0.0.1:4096");
+  });
+
+  it("allows buffered assistant streaming to be enabled explicitly", () => {
+    const config = loadConfig({ ...baseEnv, DISCORD_STREAM_ASSISTANT_TEXT: "true" });
+    expect(config.streamAssistantText).toBe(true);
   });
 
   it("requires an explicit user allowlist", () => {
