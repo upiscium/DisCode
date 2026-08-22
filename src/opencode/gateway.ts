@@ -117,7 +117,8 @@ export class OpenCodeGateway {
         url: file.url,
       })),
     ];
-    if (parts.length === 0) throw new Error("OpenCode prompt must contain text or at least one file");
+    if (parts.length === 0)
+      throw new Error("OpenCode prompt must contain text or at least one file");
 
     await this.#client.session.promptAsync({
       path: { id: sessionId },
