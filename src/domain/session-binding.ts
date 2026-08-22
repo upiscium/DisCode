@@ -7,4 +7,5 @@ export type SessionBinding = {
   createdBy: string;
   createdAt: string;
   lastPublishedAssistantMessageId?: string;
+  headerMessageId?: string;
 };

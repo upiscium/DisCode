@@ -37,4 +37,18 @@ describe("StateStore", () => {
     await store.updateLastPublished("thread-1", "msg-2");
     expect(store.getByThread("thread-1")?.lastPublishedAssistantMessageId).toBe("msg-2");
   });
+
+  it("adds an optional managed header id without changing state version", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const path = join(dir, "state.json");
+    const store = new StateStore(path);
+    await store.load();
+    await store.put(binding);
+    await store.updateHeaderMessageId("thread-1", "header-1");
+
+    const reloaded = new StateStore(path);
+    await reloaded.load();
+    expect(reloaded.getByThread("thread-1")?.headerMessageId).toBe("header-1");
+    expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
+  });
 });

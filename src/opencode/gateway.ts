@@ -60,6 +60,15 @@ export type OpenCodeAssistantResult = {
   parts: Part[];
 };
 
+export type OpenCodeSessionHeaderContext = {
+  agent?: string;
+  model?: {
+    providerID: string;
+    modelID: string;
+  };
+  branch?: string;
+};
+
 export class OpenCodeGateway {
   readonly #client: ReturnType<typeof createOpencodeClient>;
   readonly #baseUrl: string;
@@ -144,6 +153,20 @@ export class OpenCodeGateway {
     return result.data[sessionId];
   }
 
+  async sessionHeaderContext(
+    directory: string,
+    sessionId: string,
+  ): Promise<OpenCodeSessionHeaderContext> {
+    const [messageContext, branch] = await Promise.all([
+      this.#latestUserContext(directory, sessionId),
+      this.#vcsBranch(directory),
+    ]);
+    return {
+      ...messageContext,
+      ...(branch ? { branch } : {}),
+    };
+  }
+
   async latestAssistantResult(
     directory: string,
     sessionId: string,
@@ -198,6 +221,41 @@ export class OpenCodeGateway {
 
   async listQuestions(directory: string): Promise<OpenCodeQuestionRequest[]> {
     return this.#requestQuestion<OpenCodeQuestionRequest[]>("GET", "/question", directory);
+  }
+
+  async #latestUserContext(
+    directory: string,
+    sessionId: string,
+  ): Promise<Omit<OpenCodeSessionHeaderContext, "branch">> {
+    const result = await this.#client.session.messages({
+      path: { id: sessionId },
+      query: { directory, limit: 50 },
+      throwOnError: true,
+    });
+    const latest = [...result.data].reverse().find((message) => message.info.role === "user");
+    if (latest?.info.role !== "user") return {};
+    return {
+      agent: latest.info.agent,
+      model: {
+        providerID: latest.info.model.providerID,
+        modelID: latest.info.model.modelID,
+      },
+    };
+  }
+
+  async #vcsBranch(directory: string): Promise<string | undefined> {
+    const url = new URL(`${this.#baseUrl}/vcs`);
+    url.searchParams.set("directory", directory);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: this.#headers,
+    });
+    if (!response.ok) {
+      throw new Error(`OpenCode VCS API failed: ${response.status} ${await response.text()}`);
+    }
+    const body: unknown = await response.json();
+    if (!isRecord(body)) throw new Error("OpenCode VCS API returned an invalid response");
+    return typeof body.branch === "string" && body.branch ? body.branch : undefined;
   }
 
   async #tryCurrentPermissionReply(
