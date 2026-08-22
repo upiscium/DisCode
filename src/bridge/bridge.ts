@@ -18,9 +18,11 @@ import {
 import type { AppConfig } from "../config.js";
 import { openCodeCommand } from "../discord/commands.js";
 import { chunkDiscordText, renderAssistantResult, sanitizeThreadName } from "../discord/format.js";
+import { renderHealthDiagnostic } from "../discord/health.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
 import type { DirectoryPolicy } from "../domain/directory-policy.js";
 import type { SessionBinding } from "../domain/session-binding.js";
+import { OpenCodeSseMonitor, probeOpenCodeHealth } from "../opencode/diagnostics.js";
 import type {
   OpenCodeEvent,
   OpenCodeGateway,
@@ -41,6 +43,7 @@ export class Bridge {
   readonly #abortController = new AbortController();
   readonly #seenPermissions = new Set<string>();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
+  readonly #sseMonitor = new OpenCodeSseMonitor();
 
   constructor(options: {
     config: AppConfig;
@@ -160,6 +163,9 @@ export class Bridge {
       case "abort":
         await this.#abort(interaction);
         break;
+      case "health":
+        await this.#health(interaction);
+        break;
       default:
         await interaction.reply({
           content: `Unknown subcommand: ${subcommand}`,
@@ -225,6 +231,16 @@ export class Bridge {
       });
       throw error;
     }
+  }
+
+  async #health(interaction: ChatInputCommandInteraction): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const http = await probeOpenCodeHealth({
+      baseUrl: this.#config.opencodeBaseUrl,
+      username: this.#config.opencodeUsername,
+      ...(this.#config.opencodePassword ? { password: this.#config.opencodePassword } : {}),
+    });
+    await interaction.editReply(renderHealthDiagnostic(http, this.#sseMonitor.status()));
   }
 
   async #status(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -300,6 +316,7 @@ export class Bridge {
 
   async #consumeOpenCodeEvents(): Promise<void> {
     for await (const globalEvent of this.#opencode.events(this.#abortController.signal)) {
+      this.#sseMonitor.observe();
       await this.#handleOpenCodeEvent(globalEvent.payload).catch((error) => {
         console.error(`Failed to handle OpenCode event ${globalEvent.payload.type}`, error);
       });

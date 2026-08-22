@@ -22,4 +22,7 @@ export const openCodeCommand = new SlashCommandBuilder()
   )
   .addSubcommand((command) =>
     command.setName("abort").setDescription("Abort this thread's OpenCode session"),
+  )
+  .addSubcommand((command) =>
+    command.setName("health").setDescription("Show OpenCode bridge health and readiness"),
   );
