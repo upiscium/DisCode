@@ -233,7 +233,7 @@ export class OpenCodeGateway {
       throwOnError: true,
     });
     const latest = [...result.data].reverse().find((message) => message.info.role === "user");
-    if (!latest || latest.info.role !== "user") return {};
+    if (latest?.info.role !== "user") return {};
     return {
       agent: latest.info.agent,
       model: {
