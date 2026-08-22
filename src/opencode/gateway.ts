@@ -128,6 +128,13 @@ export class OpenCodeGateway {
     permissionId: string,
     response: OpenCodePermissionResponse,
   ): Promise<void> {
+    const handledByCurrentApi = await this.#tryCurrentPermissionReply(
+      directory,
+      permissionId,
+      response,
+    );
+    if (handledByCurrentApi) return;
+
     await this.#client.postSessionIdPermissionsPermissionId({
       path: { id: sessionId, permissionID: permissionId },
       query: { directory },
@@ -155,6 +162,30 @@ export class OpenCodeGateway {
 
   async listQuestions(directory: string): Promise<OpenCodeQuestionRequest[]> {
     return this.#requestQuestion<OpenCodeQuestionRequest[]>("GET", "/question", directory);
+  }
+
+  async #tryCurrentPermissionReply(
+    directory: string,
+    requestId: string,
+    reply: OpenCodePermissionResponse,
+  ): Promise<boolean> {
+    const url = new URL(
+      `${this.#baseUrl}/permission/${encodeURIComponent(requestId)}/reply`,
+    );
+    url.searchParams.set("directory", directory);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...this.#headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ reply }),
+    });
+    if (response.status === 404) return false;
+    if (!response.ok) {
+      throw new Error(`OpenCode permission API failed: ${response.status} ${await response.text()}`);
+    }
+    return true;
   }
 
   async #requestQuestion<T = unknown>(
@@ -189,7 +220,7 @@ export class OpenCodeGateway {
         });
         for await (const event of subscription.stream) {
           if (signal?.aborted) return;
-          yield event as BridgeGlobalEvent;
+          yield normalizeBridgeGlobalEvent(event);
         }
         backoffMs = 1000;
       } catch (error) {
@@ -218,6 +249,74 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       { once: true },
     );
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+export function normalizeBridgeGlobalEvent(event: unknown): BridgeGlobalEvent {
+  if (!isRecord(event) || typeof event.directory !== "string" || !isRecord(event.payload)) {
+    return event as BridgeGlobalEvent;
+  }
+
+  const payload = event.payload;
+  if (payload.type === "permission.asked" && isRecord(payload.properties)) {
+    const properties = payload.properties;
+    if (
+      typeof properties.id === "string" &&
+      typeof properties.sessionID === "string" &&
+      typeof properties.permission === "string"
+    ) {
+      const tool = isRecord(properties.tool) ? properties.tool : undefined;
+      const messageID = tool && typeof tool.messageID === "string" ? tool.messageID : "";
+      const callID = tool && typeof tool.callID === "string" ? tool.callID : undefined;
+      return {
+        directory: event.directory,
+        payload: {
+          type: "permission.updated",
+          properties: {
+            id: properties.id,
+            type: properties.permission,
+            pattern: stringArray(properties.patterns),
+            sessionID: properties.sessionID,
+            messageID,
+            ...(callID ? { callID } : {}),
+            title: properties.permission,
+            metadata: isRecord(properties.metadata) ? properties.metadata : {},
+            time: { created: Date.now() },
+          },
+        },
+      };
+    }
+  }
+
+  if (payload.type === "permission.replied" && isRecord(payload.properties)) {
+    const properties = payload.properties;
+    if (
+      typeof properties.sessionID === "string" &&
+      typeof properties.requestID === "string" &&
+      typeof properties.reply === "string"
+    ) {
+      return {
+        directory: event.directory,
+        payload: {
+          type: "permission.replied",
+          properties: {
+            sessionID: properties.sessionID,
+            permissionID: properties.requestID,
+            response: properties.reply,
+          },
+        },
+      };
+    }
+  }
+
+  return event as BridgeGlobalEvent;
 }
 
 // Re-export the event union for bridge-side exhaustiveness without exposing the SDK client itself.
