@@ -104,6 +104,7 @@ type FlushState = {
   pending: boolean;
   running: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
+  runPromise: Promise<void> | undefined;
 };
 
 export class CoalescedSessionFlusher {
@@ -125,6 +126,7 @@ export class CoalescedSessionFlusher {
       pending: false,
       running: false,
       timer: undefined,
+      runPromise: undefined,
     };
     state.callback = callback;
     state.pending = true;
@@ -138,6 +140,13 @@ export class CoalescedSessionFlusher {
     this.#states.delete(sessionId);
   }
 
+  async cancelAndDrain(sessionId: string): Promise<void> {
+    const state = this.#states.get(sessionId);
+    if (state?.timer) clearTimeout(state.timer);
+    this.#states.delete(sessionId);
+    await state?.runPromise;
+  }
+
   cancelAll(): void {
     for (const sessionId of [...this.#states.keys()]) this.cancel(sessionId);
   }
@@ -146,7 +155,11 @@ export class CoalescedSessionFlusher {
     if (state.timer || state.running || !state.pending) return;
     state.timer = setTimeout(() => {
       state.timer = undefined;
-      void this.#run(sessionId, state);
+      const runPromise = this.#run(sessionId, state);
+      state.runPromise = runPromise;
+      void runPromise.finally(() => {
+        if (state.runPromise === runPromise) state.runPromise = undefined;
+      });
     }, this.#intervalMs);
   }
 
