@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenCodeGateway, normalizeBridgeGlobalEvent } from "../src/opencode/gateway.js";
+import { normalizeBridgeGlobalEvent, OpenCodeGateway } from "../src/opencode/gateway.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
