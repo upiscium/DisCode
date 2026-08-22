@@ -29,11 +29,15 @@ export async function deliverCanonicalAssistantResult(options: {
   if (options.editPreview) {
     try {
       await options.editPreview(first);
-      for (const chunk of chunks.slice(1)) await options.send(chunk);
-      return;
     } catch (error) {
       options.onPreviewEditError?.(error);
+      await options.send(first);
+      for (const chunk of chunks.slice(1)) await options.send(chunk);
+      return;
     }
+
+    for (const chunk of chunks.slice(1)) await options.send(chunk);
+    return;
   }
 
   await options.send(first);
