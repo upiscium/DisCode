@@ -5,18 +5,41 @@ on:
   push:
     branches: [main]
 
+# Temporary bootstrap permission: this branch lets CI commit the first
+# package-lock.json back to the PR branch. Restore to contents: read once the
+# lockfile exists.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A pull_request checkout normally points at a synthetic merge ref.
+          # Check out the actual head branch so the bootstrap lockfile commit
+          # can be pushed back safely.
+          ref: ${{ github.head_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Bootstrap phase: package-lock.json is intentionally absent until the first online install.
-      # Once the lockfile is committed, replace this with `npm ci`.
+      - id: lockfile
+        shell: bash
+        run: |
+          if [[ -f package-lock.json ]]; then
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+          fi
       - run: npm install
       - run: npm run check
+      - name: Commit bootstrap lockfile
+        if: steps.lockfile.outputs.missing == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- package-lock.json
+          git commit -m "chore: lock npm dependencies"
+          git push origin "HEAD:${{ github.head_ref }}"
