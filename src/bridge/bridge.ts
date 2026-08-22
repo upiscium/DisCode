@@ -16,6 +16,7 @@ import {
   type ThreadChannel,
 } from "discord.js";
 import type { AppConfig } from "../config.js";
+import { prepareDiscordAttachments } from "../discord/attachments.js";
 import { openCodeCommand } from "../discord/commands.js";
 import { chunkDiscordText, renderAssistantResult, sanitizeThreadName } from "../discord/format.js";
 import { renderHealthDiagnostic } from "../discord/health.js";
@@ -281,16 +282,17 @@ export class Bridge {
 
     const binding = this.#state.getByThread(message.channelId);
     if (!binding) return;
-    if (message.attachments.size > 0) {
-      await message.reply("Attachments are not supported by the MVP yet. Send text only.");
-      return;
-    }
 
     const text = message.content.trim();
-    if (!text) return;
+    const hasAttachments = message.attachments.size > 0;
+    if (!text && !hasAttachments) return;
 
     const pendingQuestion = this.#pendingQuestions.get(binding.sessionId);
     if (pendingQuestion) {
+      if (hasAttachments) {
+        await message.reply("Attachments cannot answer a pending Ask. Send a text-only answer.");
+        return;
+      }
       try {
         const answers = parseQuestionAnswers(text, pendingQuestion.questions);
         await this.#opencode.replyQuestion(binding.directory, pendingQuestion.id, answers);
@@ -310,7 +312,24 @@ export class Bridge {
       return;
     }
 
-    await this.#opencode.promptAsync(binding.directory, binding.sessionId, text);
+    if (hasAttachments) {
+      try {
+        const files = await prepareDiscordAttachments(
+          [...message.attachments.values()].map((attachment) => ({
+            name: attachment.name,
+            size: attachment.size,
+            contentType: attachment.contentType,
+            url: attachment.url,
+          })),
+        );
+        await this.#opencode.promptAsyncWithFiles(binding.directory, binding.sessionId, text, files);
+      } catch (error) {
+        await message.reply(`Attachment rejected: ${truncate(errorMessage(error), 1500)}`);
+        return;
+      }
+    } else {
+      await this.#opencode.promptAsync(binding.directory, binding.sessionId, text);
+    }
     await message.react("⏳").catch(() => undefined);
   }
 
