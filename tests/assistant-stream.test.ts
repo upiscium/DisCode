@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AssistantTextStreamBuffer, CoalescedSessionFlusher } from "../src/bridge/assistant-stream.js";
+import {
+  AssistantTextStreamBuffer,
+  CoalescedSessionFlusher,
+} from "../src/bridge/assistant-stream.js";
 
 afterEach(() => {
   vi.useRealTimers();
