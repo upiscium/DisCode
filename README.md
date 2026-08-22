@@ -16,11 +16,12 @@ The OpenCode server is the source of truth. A local tmux session keeps `opencode
 - `session.idle` publishes the latest completed assistant **Result** to the thread.
 - `/oc status` reports the bound OpenCode session state.
 - `/oc abort` asks OpenCode to abort the current turn.
+- `/oc health` reports OpenCode HTTP health plus global SSE readiness.
 - A persisted JSON binding lets the bridge reconnect a Discord thread to an existing OpenCode session after restart.
 
 For a multi-question Ask, reply with one line per question; for a multi-select question, separate selections with commas. A **Reject Ask** button is also provided. Pending Ask requests are reconciled from OpenCode when the bridge restarts.
 
-The MVP deliberately does **not** stream every token to Discord. Publishing only at `session.idle` avoids rate-limit pressure, duplicate edits, and partial-result recovery complexity. Streaming can be added later without changing the control-plane boundary.
+Assistant streaming is optional and disabled by default. When `DISCORD_STREAM_ASSISTANT_TEXT=true`, assistant text is buffered and coalesced to a conservative update cadence before a single Discord preview message is edited. Reasoning and successful raw tool output are not streamed. `session.idle` still re-fetches the canonical assistant result and converges the preview to the final `✅ Result`.
 
 ## Security boundary
 
@@ -100,9 +101,12 @@ OPENCODE_ALLOWED_ROOTS=/home/upiscium/Documents/Programs
 OPENCODE_BASE_URL=http://127.0.0.1:4096
 OPENCODE_SERVER_USERNAME=opencode
 OPENCODE_SERVER_PASSWORD=<long-random-password>
+DISCORD_STREAM_ASSISTANT_TEXT=false
 ```
 
 The same `OPENCODE_SERVER_PASSWORD` environment variable should be present when the tmux server and bridge are launched.
+
+Set `DISCORD_STREAM_ASSISTANT_TEXT=true` only when buffered progress previews are desired. The default `false` keeps the Phase 1 final-only behavior.
 
 ### 3. Start OpenCode in the dedicated tmux server
 
