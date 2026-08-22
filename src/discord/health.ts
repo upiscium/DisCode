@@ -1,9 +1,6 @@
 import type { OpenCodeHttpHealth, OpenCodeSseState } from "../opencode/diagnostics.js";
 
-export function renderHealthDiagnostic(
-  http: OpenCodeHttpHealth,
-  sse: OpenCodeSseState,
-): string {
+export function renderHealthDiagnostic(http: OpenCodeHttpHealth, sse: OpenCodeSseState): string {
   const ready = http.kind === "healthy" && sse === "connected";
   return [
     `Bridge: **${ready ? "ready" : "degraded"}**`,
