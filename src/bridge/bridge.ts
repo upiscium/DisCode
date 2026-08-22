@@ -322,7 +322,12 @@ export class Bridge {
             url: attachment.url,
           })),
         );
-        await this.#opencode.promptAsyncWithFiles(binding.directory, binding.sessionId, text, files);
+        await this.#opencode.promptAsyncWithFiles(
+          binding.directory,
+          binding.sessionId,
+          text,
+          files,
+        );
       } catch (error) {
         await message.reply(`Attachment rejected: ${truncate(errorMessage(error), 1500)}`);
         return;
