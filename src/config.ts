@@ -44,7 +44,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function assertOnlyKeys(value: Record<string, unknown>, keys: readonly string[], label: string): void {
+function assertOnlyKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): void {
   const allowed = new Set(keys);
   const unknown = Object.keys(value).filter((key) => !allowed.has(key));
   if (unknown.length > 0) {
@@ -122,7 +126,10 @@ function configuredHostRegistry(raw: string, env: NodeJS.ProcessEnv): HostRegist
     assertOnlyKeys(item, ["id", "baseUrl", "username", "passwordEnv", "allowedRoots"], label);
 
     const id = stringField(item.id, `${label}.id`);
-    const baseUrl = normalizeBaseUrl(stringField(item.baseUrl, `${label}.baseUrl`), `${label}.baseUrl`);
+    const baseUrl = normalizeBaseUrl(
+      stringField(item.baseUrl, `${label}.baseUrl`),
+      `${label}.baseUrl`,
+    );
     const username = stringField(item.username, `${label}.username`);
     const allowedRoots = normalizeAllowedRoots(item.allowedRoots, `${label}.allowedRoots`);
 
