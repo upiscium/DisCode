@@ -103,7 +103,7 @@ type FlushState = {
   callback: FlushCallback;
   pending: boolean;
   running: boolean;
-  timer?: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
 };
 
 export class CoalescedSessionFlusher {
@@ -124,6 +124,7 @@ export class CoalescedSessionFlusher {
       callback,
       pending: false,
       running: false,
+      timer: undefined,
     };
     state.callback = callback;
     state.pending = true;
