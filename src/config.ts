@@ -7,6 +7,7 @@ export type AppConfig = {
   discordParentChannelId: string;
   allowedUserIds: ReadonlySet<string>;
   allowPermissionAlways: boolean;
+  streamAssistantText: boolean;
   opencodeBaseUrl: string;
   opencodeUsername: string;
   opencodePassword?: string;
@@ -62,6 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     discordParentChannelId: required(env, "DISCORD_PARENT_CHANNEL_ID"),
     allowedUserIds,
     allowPermissionAlways: boolean(env.DISCORD_ALLOW_PERMISSION_ALWAYS, false),
+    streamAssistantText: boolean(env.DISCORD_STREAM_ASSISTANT_TEXT, false),
     opencodeBaseUrl: parsedUrl.toString().replace(/\/$/, ""),
     opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || "opencode",
     ...(password ? { opencodePassword: password } : {}),
