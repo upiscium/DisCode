@@ -32,7 +32,12 @@ import type {
   OpenCodeQuestionRequest,
 } from "../opencode/gateway.js";
 import type { StateStore } from "../state/state-store.js";
-import { lifecycleBlockReason, renderLifecycleBlock } from "./session-lifecycle.js";
+import {
+  executeCloseMutation,
+  executeUnbindMutation,
+  lifecycleBlockReason,
+  renderLifecycleBlock,
+} from "./session-lifecycle.js";
 
 const PERMISSION_PREFIX = "ocperm";
 const QUESTION_PREFIX = "ocquestion";
@@ -305,8 +310,10 @@ export class Bridge {
       return;
     }
 
-    await this.#opencode.deleteSession(binding.directory, binding.sessionId);
-    await this.#state.remove(binding.threadId);
+    await executeCloseMutation({
+      deleteSession: () => this.#opencode.deleteSession(binding.directory, binding.sessionId),
+      removeBinding: () => this.#state.remove(binding.threadId),
+    });
     this.#pendingQuestions.delete(binding.sessionId);
 
     await interaction.editReply(
@@ -346,7 +353,9 @@ export class Bridge {
       return;
     }
 
-    await this.#state.remove(binding.threadId);
+    await executeUnbindMutation({
+      removeBinding: () => this.#state.remove(binding.threadId),
+    });
     this.#pendingQuestions.delete(binding.sessionId);
     await interaction.editReply(
       [
