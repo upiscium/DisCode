@@ -6,7 +6,7 @@ describe("open-tui-window helper", () => {
     const script = await readFile("scripts/open-tui-window.sh", "utf8");
 
     expect(script).toContain("opencode attach");
-    expect(script).not.toContain("attach_args+=(--username");
-    expect(script).not.toContain('--password "$OPENCODE_SERVER_PASSWORD"');
+    expect(script).not.toContain("--password");
+    expect(script).not.toContain("--username");
   });
 });
