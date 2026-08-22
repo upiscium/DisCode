@@ -19,7 +19,7 @@ describe("Discord streaming helpers", () => {
     const rendered = renderAssistantStreamingPreview(`old-${"x".repeat(200)}-TAIL`, 80);
     expect(rendered.length).toBeLessThanOrEqual(80);
     expect(rendered).toContain("Streaming");
-    expect(rendered).toEndWith("-TAIL");
+    expect(rendered.endsWith("-TAIL")).toBe(true);
     expect(rendered).not.toContain("old-");
   });
 
@@ -153,8 +153,16 @@ describe("AssistantStreamingPublisher", () => {
 
 function fakeTransport() {
   return {
-    post: vi.fn(async () => ({ id: "discord_preview_1" })),
-    patch: vi.fn(async () => ({ id: "discord_preview_1" })),
+    post: vi.fn(
+      async (_route: string, _options: { body: { content: string } }) => ({
+        id: "discord_preview_1",
+      }),
+    ),
+    patch: vi.fn(
+      async (_route: string, _options: { body: { content: string } }) => ({
+        id: "discord_preview_1",
+      }),
+    ),
   } satisfies DiscordMessageTransport;
 }
 
@@ -191,7 +199,6 @@ function assistantMessageEvent(): OpenCodeEvent {
   return {
     type: "message.updated",
     properties: {
-      sessionID: "ses_1",
       info: {
         id: "msg_1",
         sessionID: "ses_1",
@@ -205,7 +212,6 @@ function textPartEvent(text: string): OpenCodeEvent {
   return {
     type: "message.part.updated",
     properties: {
-      sessionID: "ses_1",
       part: {
         id: "prt_1",
         sessionID: "ses_1",
@@ -213,7 +219,6 @@ function textPartEvent(text: string): OpenCodeEvent {
         type: "text",
         text,
       },
-      time: 1,
     },
   } as unknown as OpenCodeEvent;
 }
@@ -228,7 +233,7 @@ function textDeltaEvent(delta: string): OpenCodeEvent {
       field: "text",
       delta,
     },
-  } as unknown as OpenCodeEvent;
+  } as OpenCodeEvent;
 }
 
 function idleEvent(): OpenCodeEvent {
