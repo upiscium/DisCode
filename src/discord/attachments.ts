@@ -30,10 +30,7 @@ export type OpenCodePromptFile = {
   url: string;
 };
 
-export type AttachmentFetch = (
-  input: string | URL,
-  init?: RequestInit,
-) => Promise<Response>;
+export type AttachmentFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 export class AttachmentValidationError extends Error {
   constructor(message: string) {
@@ -134,15 +131,26 @@ export function validateDiscordAttachmentUrl(value: string): URL {
 
 export function sanitizeFilename(value: string): string {
   const basename = value.replace(/\\/g, "/").split("/").at(-1) ?? "";
-  const compact = basename.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  const compact = [...basename]
+    .filter((char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return code > 0x1f && code !== 0x7f;
+    })
+    .join("")
+    .trim();
   return (compact || "attachment").slice(0, 120);
 }
 
-export function classifyAttachmentMime(declaredMime: string | undefined, bytes: Uint8Array): string {
+export function classifyAttachmentMime(
+  declaredMime: string | undefined,
+  bytes: Uint8Array,
+): string {
   const detectedMedia = sniffDirectMediaMime(bytes);
   if (declaredMime && DIRECT_MEDIA_MIMES.has(declaredMime)) {
     if (detectedMedia !== declaredMime) {
-      throw new AttachmentValidationError(`Attachment media signature does not match ${declaredMime}`);
+      throw new AttachmentValidationError(
+        `Attachment media signature does not match ${declaredMime}`,
+      );
     }
     return declaredMime;
   }
@@ -153,10 +161,14 @@ export function classifyAttachmentMime(declaredMime: string | undefined, bytes: 
     throw new AttachmentValidationError(`Unsupported attachment type: ${declaredMime}`);
   }
   if (detectedMedia) {
-    throw new AttachmentValidationError("Attachment media signature does not match its text content type");
+    throw new AttachmentValidationError(
+      "Attachment media signature does not match its text content type",
+    );
   }
   if (!isUtf8Text(bytes)) {
-    throw new AttachmentValidationError("Unsupported binary attachment; only images, PDF, and UTF-8 text are allowed");
+    throw new AttachmentValidationError(
+      "Unsupported binary attachment; only images, PDF, and UTF-8 text are allowed",
+    );
   }
   return "text/plain";
 }
