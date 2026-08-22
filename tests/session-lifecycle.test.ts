@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { lifecycleBlockReason, renderLifecycleBlock } from "../src/bridge/session-lifecycle.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  executeLifecycleMutation,
+  lifecycleBlockReason,
+  renderLifecycleBlock,
+} from "../src/bridge/session-lifecycle.js";
 
 describe("session lifecycle policy", () => {
   it("allows idle or missing status when no Ask is pending", () => {
@@ -24,8 +28,48 @@ describe("session lifecycle policy", () => {
   });
 
   it("does not imply automatic abort", () => {
-    expect(
-      renderLifecycleBlock({ kind: "active-session", status: "busy" }),
-    ).toContain("use `/oc abort`, then retry");
+    expect(renderLifecycleBlock({ kind: "active-session", status: "busy" })).toContain(
+      "use `/oc abort`, then retry",
+    );
+  });
+});
+
+describe("session lifecycle mutations", () => {
+  it("close deletes the OpenCode session before removing the binding", async () => {
+    const calls: string[] = [];
+    await executeLifecycleMutation("close", {
+      deleteSession: vi.fn(async () => {
+        calls.push("delete-session");
+      }),
+      removeBinding: vi.fn(async () => {
+        calls.push("remove-binding");
+      }),
+    });
+
+    expect(calls).toEqual(["delete-session", "remove-binding"]);
+  });
+
+  it("close preserves the binding when session deletion fails", async () => {
+    const removeBinding = vi.fn(async () => undefined);
+    await expect(
+      executeLifecycleMutation("close", {
+        deleteSession: async () => {
+          throw new Error("delete failed");
+        },
+        removeBinding,
+      }),
+    ).rejects.toThrow("delete failed");
+
+    expect(removeBinding).not.toHaveBeenCalled();
+  });
+
+  it("unbind removes only the binding and never deletes the OpenCode session", async () => {
+    const deleteSession = vi.fn(async () => undefined);
+    const removeBinding = vi.fn(async () => undefined);
+
+    await executeLifecycleMutation("unbind", { deleteSession, removeBinding });
+
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(removeBinding).toHaveBeenCalledTimes(1);
   });
 });
