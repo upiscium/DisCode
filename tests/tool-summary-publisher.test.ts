@@ -154,6 +154,42 @@ describe("ToolSummaryPublisher", () => {
     expect(transport.post.mock.calls[0]?.[1].body.content).toContain("README.md");
   });
 
+  it("flushes short tool activity before advancing to the next assistant message", async () => {
+    vi.useFakeTimers();
+    const binding = testBinding();
+    const transport = fakeTransport();
+    const publisher = new ToolSummaryPublisher({
+      enabled: true,
+      discordToken: "unused-test-token",
+      state: { getBySession: () => ({ ...binding }) },
+      transport,
+      flushIntervalMs: 1000,
+    });
+
+    await publisher.handleEvent(assistantMessageEvent("msg_1"), gatewayStub());
+    await publisher.handleEvent(
+      toolEvent({
+        tool: "read",
+        status: "error",
+        input: { filePath: "/repo/README.md" },
+        error: "hidden read failure",
+        time: { start: 0, end: 50 },
+      }),
+      gatewayStub(),
+    );
+    expect(transport.post).not.toHaveBeenCalled();
+
+    await publisher.handleEvent(assistantMessageEvent("msg_2"), gatewayStub());
+
+    expect(transport.post).toHaveBeenCalledTimes(1);
+    const content = transport.post.mock.calls[0]?.[1].body.content ?? "";
+    expect(content).toContain("❌ — read — README.md");
+    expect(content).not.toContain("hidden read failure");
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(transport.post).toHaveBeenCalledTimes(1);
+  });
+
   it("does nothing when summaries are disabled", async () => {
     vi.useFakeTimers();
     const transport = fakeTransport();
@@ -207,11 +243,11 @@ function testBinding(): SessionBinding {
   };
 }
 
-function assistantMessageEvent(): OpenCodeEvent {
+function assistantMessageEvent(messageId = "msg_1"): OpenCodeEvent {
   return {
     type: "message.updated",
     properties: {
-      info: { id: "msg_1", sessionID: "ses_1", role: "assistant" },
+      info: { id: messageId, sessionID: "ses_1", role: "assistant" },
     },
   } as unknown as OpenCodeEvent;
 }
