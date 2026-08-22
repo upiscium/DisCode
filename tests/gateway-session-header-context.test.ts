@@ -51,11 +51,12 @@ describe("OpenCodeGateway session header context", () => {
       ],
     });
 
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ branch: "feat/header", default_branch: "main" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ branch: "feat/header", default_branch: "main" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -85,11 +86,12 @@ describe("OpenCodeGateway session header context", () => {
     mocks.messages.mockResolvedValue({ data: [] });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({}), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
       ),
     );
 
