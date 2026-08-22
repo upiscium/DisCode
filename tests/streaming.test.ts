@@ -55,7 +55,7 @@ describe("Discord streaming helpers", () => {
   });
 
   it("does not replay the first final chunk when a later chunk send fails", async () => {
-    const send = vi.fn(async () => {
+    const send = vi.fn(async (_content: string) => {
       throw new Error("send failed");
     });
     const editPreview = vi.fn(async () => undefined);
