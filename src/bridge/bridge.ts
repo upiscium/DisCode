@@ -33,13 +33,13 @@ import type {
   OpenCodeQuestionRequest,
 } from "../opencode/gateway.js";
 import type { StateStore } from "../state/state-store.js";
+import { SessionHeaderManager } from "./session-header-manager.js";
 import {
   executeCloseMutation,
   executeUnbindMutation,
   lifecycleBlockReason,
   renderLifecycleBlock,
 } from "./session-lifecycle.js";
-import { SessionHeaderManager } from "./session-header-manager.js";
 
 const PERMISSION_PREFIX = "ocperm";
 const QUESTION_PREFIX = "ocquestion";
