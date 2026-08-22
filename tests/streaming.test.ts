@@ -53,6 +53,28 @@ describe("Discord streaming helpers", () => {
     expect(onPreviewEditError).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith("✅ **Result**\ncanonical result");
   });
+
+  it("does not replay the first final chunk when a later chunk send fails", async () => {
+    const send = vi.fn(async () => {
+      throw new Error("send failed");
+    });
+    const editPreview = vi.fn(async () => undefined);
+    const onPreviewEditError = vi.fn();
+
+    await expect(
+      deliverCanonicalAssistantResult({
+        rendered: "x".repeat(1900),
+        send,
+        editPreview,
+        onPreviewEditError,
+      }),
+    ).rejects.toThrow("send failed");
+
+    expect(editPreview).toHaveBeenCalledTimes(1);
+    expect(onPreviewEditError).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[0].startsWith("✅ **Result**")).toBe(false);
+  });
 });
 
 describe("AssistantStreamingPublisher", () => {
