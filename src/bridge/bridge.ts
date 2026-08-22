@@ -1,12 +1,12 @@
 import {
   ActionRowBuilder,
   ButtonBuilder,
+  type ButtonInteraction,
   ButtonStyle,
   ChannelType,
+  type ChatInputCommandInteraction,
   Client,
   GatewayIntentBits,
-  type ButtonInteraction,
-  type ChatInputCommandInteraction,
   type Interaction,
   type Message,
   MessageFlags,
@@ -16,13 +16,17 @@ import {
   type ThreadChannel,
 } from "discord.js";
 import type { AppConfig } from "../config.js";
-import type { DirectoryPolicy } from "../domain/directory-policy.js";
-import type { SessionBinding } from "../domain/session-binding.js";
 import { openCodeCommand } from "../discord/commands.js";
 import { chunkDiscordText, renderAssistantResult, sanitizeThreadName } from "../discord/format.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
-import type { OpenCodeEvent, OpenCodePermissionResponse, OpenCodeQuestionRequest } from "../opencode/gateway.js";
-import { OpenCodeGateway } from "../opencode/gateway.js";
+import type { DirectoryPolicy } from "../domain/directory-policy.js";
+import type { SessionBinding } from "../domain/session-binding.js";
+import type {
+  OpenCodeEvent,
+  OpenCodeGateway,
+  OpenCodePermissionResponse,
+  OpenCodeQuestionRequest,
+} from "../opencode/gateway.js";
 import type { StateStore } from "../state/state-store.js";
 
 const PERMISSION_PREFIX = "ocperm";
@@ -49,19 +53,27 @@ export class Bridge {
     this.#state = options.state;
     this.#opencode = options.opencode;
     this.#discord = new Client({
-      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+      ],
     });
   }
 
   async start(): Promise<void> {
     await this.#registerCommands();
     this.#discord.on("interactionCreate", (interaction) => {
-      void this.#handleInteraction(interaction).catch((error) => this.#handleInteractionFailure(interaction, error));
+      void this.#handleInteraction(interaction).catch((error) =>
+        this.#handleInteractionFailure(interaction, error),
+      );
     });
     this.#discord.on("messageCreate", (message) => {
       void this.#handleMessage(message).catch(async (error) => {
         console.error("Discord message handling failed", error);
-        await message.reply(`Bridge error: ${truncate(errorMessage(error), 1600)}`).catch(() => undefined);
+        await message
+          .reply(`Bridge error: ${truncate(errorMessage(error), 1600)}`)
+          .catch(() => undefined);
       });
     });
     this.#discord.once("ready", (client) => {
@@ -95,9 +107,12 @@ export class Bridge {
 
   async #registerCommands(): Promise<void> {
     const rest = new REST({ version: "10" }).setToken(this.#config.discordToken);
-    await rest.put(Routes.applicationGuildCommands(this.#config.discordClientId, this.#config.discordGuildId), {
-      body: [openCodeCommand.toJSON()],
-    });
+    await rest.put(
+      Routes.applicationGuildCommands(this.#config.discordClientId, this.#config.discordGuildId),
+      {
+        body: [openCodeCommand.toJSON()],
+      },
+    );
   }
 
   #authorized(userId: string): boolean {
@@ -107,13 +122,19 @@ export class Bridge {
   async #handleInteraction(interaction: Interaction): Promise<void> {
     if (!this.#authorized(interaction.user.id)) {
       if (interaction.isRepliable()) {
-        await interaction.reply({ content: "This user is not authorized to control OpenCode.", flags: MessageFlags.Ephemeral });
+        await interaction.reply({
+          content: "This user is not authorized to control OpenCode.",
+          flags: MessageFlags.Ephemeral,
+        });
       }
       return;
     }
     if (interaction.guildId !== this.#config.discordGuildId) {
       if (interaction.isRepliable()) {
-        await interaction.reply({ content: "This command is restricted to the configured guild.", flags: MessageFlags.Ephemeral });
+        await interaction.reply({
+          content: "This command is restricted to the configured guild.",
+          flags: MessageFlags.Ephemeral,
+        });
       }
       return;
     }
@@ -140,7 +161,10 @@ export class Bridge {
         await this.#abort(interaction);
         break;
       default:
-        await interaction.reply({ content: `Unknown subcommand: ${subcommand}`, flags: MessageFlags.Ephemeral });
+        await interaction.reply({
+          content: `Unknown subcommand: ${subcommand}`,
+          flags: MessageFlags.Ephemeral,
+        });
     }
   }
 
@@ -149,7 +173,8 @@ export class Bridge {
     const requestedDirectory = interaction.options.getString("directory", true);
     const directory = await this.#policy.authorize(requestedDirectory);
     const requestedTitle = interaction.options.getString("title")?.trim();
-    const title = requestedTitle || directory.split("/").filter(Boolean).at(-1) || "OpenCode session";
+    const title =
+      requestedTitle || directory.split("/").filter(Boolean).at(-1) || "OpenCode session";
 
     const parent = await this.#discord.channels.fetch(this.#config.discordParentChannelId);
     if (!parent || parent.type !== ChannelType.GuildText) {
@@ -175,19 +200,25 @@ export class Bridge {
         createdAt: new Date().toISOString(),
       };
       await this.#state.put(binding);
-      await thread.send([
-        "🤖 **OpenCode session created**",
-        `Session: \`${session.id}\``,
-        `Directory: \`${escapeInlineCode(directory)}\``,
-        "",
-        "Messages posted in this thread are sent to OpenCode.",
-        "Execution permissions remain governed by OpenCode; Discord does not execute shell commands directly.",
-      ].join("\n"));
-      await interaction.editReply(`Created <#${thread.id}> for OpenCode session \`${session.id}\`.`);
+      await thread.send(
+        [
+          "🤖 **OpenCode session created**",
+          `Session: \`${session.id}\``,
+          `Directory: \`${escapeInlineCode(directory)}\``,
+          "",
+          "Messages posted in this thread are sent to OpenCode.",
+          "Execution permissions remain governed by OpenCode; Discord does not execute shell commands directly.",
+        ].join("\n"),
+      );
+      await interaction.editReply(
+        `Created <#${thread.id}> for OpenCode session \`${session.id}\`.`,
+      );
     } catch (error) {
       if (thread) {
         await this.#state.remove(thread.id).catch(() => undefined);
-        await thread.delete("Rolling back failed OpenCode bridge session creation").catch(() => undefined);
+        await thread
+          .delete("Rolling back failed OpenCode bridge session creation")
+          .catch(() => undefined);
       }
       await this.#opencode.deleteSession(directory, session.id).catch((rollbackError) => {
         console.error("Failed to roll back OpenCode session", rollbackError);
@@ -199,7 +230,10 @@ export class Bridge {
   async #status(interaction: ChatInputCommandInteraction): Promise<void> {
     const binding = this.#state.getByThread(interaction.channelId);
     if (!binding) {
-      await interaction.reply({ content: "This is not a bound OpenCode thread.", flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        content: "This is not a bound OpenCode thread.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     const status = await this.#opencode.status(binding.directory, binding.sessionId);
@@ -212,11 +246,17 @@ export class Bridge {
   async #abort(interaction: ChatInputCommandInteraction): Promise<void> {
     const binding = this.#state.getByThread(interaction.channelId);
     if (!binding) {
-      await interaction.reply({ content: "This is not a bound OpenCode thread.", flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        content: "This is not a bound OpenCode thread.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     await this.#opencode.abort(binding.directory, binding.sessionId);
-    await interaction.reply({ content: `Abort requested for \`${binding.sessionId}\`.`, flags: MessageFlags.Ephemeral });
+    await interaction.reply({
+      content: `Abort requested for \`${binding.sessionId}\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   async #handleMessage(message: Message): Promise<void> {
@@ -248,7 +288,9 @@ export class Bridge {
 
     const status = await this.#opencode.status(binding.directory, binding.sessionId);
     if (status?.type === "busy" || status?.type === "retry") {
-      await message.reply(`OpenCode is currently **${status.type}**. Wait for the current turn to finish or use \`/oc abort\`.`);
+      await message.reply(
+        `OpenCode is currently **${status.type}**. Wait for the current turn to finish or use \`/oc abort\`.`,
+      );
       return;
     }
 
@@ -295,7 +337,6 @@ export class Bridge {
         break;
     }
   }
-
 
   async #reconcilePendingQuestions(): Promise<void> {
     const directories = [...new Set(this.#state.list().map((binding) => binding.directory))];
@@ -345,8 +386,15 @@ export class Bridge {
     if (!parsed) return;
     const binding = this.#state.getBySession(parsed.sessionId);
     const pending = this.#pendingQuestions.get(parsed.sessionId);
-    if (!binding || binding.threadId !== interaction.channelId || pending?.id !== parsed.requestId) {
-      await interaction.reply({ content: "This Ask is no longer pending for this thread.", flags: MessageFlags.Ephemeral });
+    if (
+      !binding ||
+      binding.threadId !== interaction.channelId ||
+      pending?.id !== parsed.requestId
+    ) {
+      await interaction.reply({
+        content: "This Ask is no longer pending for this thread.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     await this.#opencode.rejectQuestion(binding.directory, parsed.requestId);
@@ -357,7 +405,9 @@ export class Bridge {
     });
   }
 
-  async #publishPermission(event: Extract<OpenCodeEvent, { type: "permission.updated" }>): Promise<void> {
+  async #publishPermission(
+    event: Extract<OpenCodeEvent, { type: "permission.updated" }>,
+  ): Promise<void> {
     const permission = event.properties;
     if (this.#seenPermissions.has(permission.id)) return;
     const binding = this.#state.getBySession(permission.sessionID);
@@ -387,7 +437,9 @@ export class Bridge {
         .setStyle(ButtonStyle.Danger),
     );
 
-    const pattern = Array.isArray(permission.pattern) ? permission.pattern.join(", ") : permission.pattern;
+    const pattern = Array.isArray(permission.pattern)
+      ? permission.pattern.join(", ")
+      : permission.pattern;
     await thread.send({
       content: [
         "⚠️ **OpenCode permission requested**",
@@ -404,16 +456,27 @@ export class Bridge {
     const parsed = parsePermissionCustomId(interaction.customId);
     if (!parsed) return;
     if (parsed.response === "always" && !this.#config.allowPermissionAlways) {
-      await interaction.reply({ content: "Persistent permission approval is disabled.", flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        content: "Persistent permission approval is disabled.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     const binding = this.#state.getBySession(parsed.sessionId);
     if (!binding || binding.threadId !== interaction.channelId) {
-      await interaction.reply({ content: "This permission request is no longer bound to this thread.", flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        content: "This permission request is no longer bound to this thread.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
-    await this.#opencode.replyPermission(binding.directory, parsed.sessionId, parsed.permissionId, parsed.response);
+    await this.#opencode.replyPermission(
+      binding.directory,
+      parsed.sessionId,
+      parsed.permissionId,
+      parsed.response,
+    );
     this.#seenPermissions.delete(parsed.permissionId);
     await interaction.update({
       content: `${interaction.message.content}\n\nResolved by <@${interaction.user.id}>: **${parsed.response}**`,
@@ -452,15 +515,20 @@ export class Bridge {
   }
 }
 
-function permissionCustomId(response: OpenCodePermissionResponse, sessionId: string, permissionId: string): string {
+function permissionCustomId(
+  response: OpenCodePermissionResponse,
+  sessionId: string,
+  permissionId: string,
+): string {
   return `${PERMISSION_PREFIX}:${response}:${sessionId}:${permissionId}`;
 }
 
-function parsePermissionCustomId(customId: string):
-  | { response: OpenCodePermissionResponse; sessionId: string; permissionId: string }
-  | undefined {
+function parsePermissionCustomId(
+  customId: string,
+): { response: OpenCodePermissionResponse; sessionId: string; permissionId: string } | undefined {
   const [prefix, response, sessionId, permissionId, ...extra] = customId.split(":");
-  if (prefix !== PERMISSION_PREFIX || extra.length > 0 || !sessionId || !permissionId) return undefined;
+  if (prefix !== PERMISSION_PREFIX || extra.length > 0 || !sessionId || !permissionId)
+    return undefined;
   if (response !== "once" && response !== "always" && response !== "reject") return undefined;
   return { response, sessionId, permissionId };
 }
@@ -469,9 +537,17 @@ function questionCustomId(sessionId: string, requestId: string): string {
   return `${QUESTION_PREFIX}:reject:${sessionId}:${requestId}`;
 }
 
-function parseQuestionCustomId(customId: string): { sessionId: string; requestId: string } | undefined {
+function parseQuestionCustomId(
+  customId: string,
+): { sessionId: string; requestId: string } | undefined {
   const [prefix, action, sessionId, requestId, ...extra] = customId.split(":");
-  if (prefix !== QUESTION_PREFIX || action !== "reject" || extra.length > 0 || !sessionId || !requestId) {
+  if (
+    prefix !== QUESTION_PREFIX ||
+    action !== "reject" ||
+    extra.length > 0 ||
+    !sessionId ||
+    !requestId
+  ) {
     return undefined;
   }
   return { sessionId, requestId };

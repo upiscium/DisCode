@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { chunkDiscordText, renderAssistantResult, sanitizeThreadName } from "../src/discord/format.js";
+import {
+  chunkDiscordText,
+  renderAssistantResult,
+  sanitizeThreadName,
+} from "../src/discord/format.js";
 
 describe("Discord formatting", () => {
   it("keeps chunks below the configured limit", () => {

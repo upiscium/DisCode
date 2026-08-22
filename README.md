@@ -123,13 +123,11 @@ This avoids accidentally depending on the environment of an unrelated, already-r
 
 ### 4. Install and start the bridge
 
-The repository is initially bootstrapped without `package-lock.json` because the generation environment had no npm-registry network access. On the first networked host:
+Dependencies are locked in `package-lock.json`, so use the reproducible install path:
 
 ```bash
-npm install
+npm ci
 npm run check
-git add -- package-lock.json
-git commit -m "chore: lock npm dependencies"
 npm run build
 npm start
 ```
@@ -169,6 +167,6 @@ npm test
 npm run check
 ```
 
-CI currently runs `npm install` because no lockfile could be generated offline. Once the first `package-lock.json` is committed, CI should be changed to `npm ci`.
+CI uses `npm ci` and the committed lockfile before running the same `npm run check` quality gate.
 
 See `docs/architecture.md`, `docs/adr/0001-opencode-server-as-source-of-truth.md`, and `docs/roadmap.md` for the design boundary and next stages.

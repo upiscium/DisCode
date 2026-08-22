@@ -25,10 +25,12 @@ describe("OpenCode Ask formatting", () => {
 
   it("parses multiple questions line-by-line", () => {
     const multiple = { ...choice, multiple: true };
-    expect(parseQuestionAnswers("1: A, B\n2: custom text", [multiple, { ...choice, options: [], custom: true }])).toEqual([
-      ["A", "B"],
-      ["custom text"],
-    ]);
+    expect(
+      parseQuestionAnswers("1: A, B\n2: custom text", [
+        multiple,
+        { ...choice, options: [], custom: true },
+      ]),
+    ).toEqual([["A", "B"], ["custom text"]]);
   });
 
   it("rejects an invalid fixed option", () => {

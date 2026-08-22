@@ -12,11 +12,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
-      # Bootstrap phase: package-lock.json is intentionally absent until the first online install.
-      # Once the lockfile is committed, replace this with `npm ci`.
-      - run: npm install
+          cache: npm
+      - run: npm ci
       - run: npm run check
