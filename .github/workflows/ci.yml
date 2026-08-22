@@ -5,44 +5,17 @@ on:
   push:
     branches: [main]
 
-# Temporary bootstrap permission: this branch lets CI commit the first
-# package-lock.json and deterministic Biome fixes back to the PR branch.
-# Restore to contents: read once the lockfile exists.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # A pull_request checkout normally points at a synthetic merge ref.
-          # Check out the actual head branch so the bootstrap commit can be
-          # pushed back safely.
-          ref: ${{ github.head_ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - id: lockfile
-        shell: bash
-        run: |
-          if [[ -f package-lock.json ]]; then
-            echo "missing=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "missing=true" >> "$GITHUB_OUTPUT"
-          fi
-      - run: npm install
-      - name: Apply deterministic Biome fixes
-        if: steps.lockfile.outputs.missing == 'true'
-        run: npx --no-install biome check --write src tests
+          cache: npm
+      - run: npm ci
       - run: npm run check
-      - name: Commit bootstrap artifacts
-        if: steps.lockfile.outputs.missing == 'true'
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- package-lock.json src tests
-          git commit -m "chore: format sources and lock npm dependencies"
-          git push origin "HEAD:${{ github.head_ref }}"
