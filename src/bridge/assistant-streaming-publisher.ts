@@ -135,7 +135,7 @@ export class AssistantStreamingPublisher {
     sessionId: string,
     gateway: Pick<OpenCodeGateway, "latestAssistantResult">,
   ): Promise<void> {
-    this.#flusher.cancel(sessionId);
+    await this.#flusher.cancelAndDrain(sessionId);
     const preview = this.#previews.get(sessionId);
     if (!preview) {
       this.#buffer.clearSession(sessionId);
