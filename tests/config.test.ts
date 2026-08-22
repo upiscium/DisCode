@@ -25,6 +25,8 @@ describe("loadConfig", () => {
   });
 
   it("rejects non-http OpenCode URLs", () => {
-    expect(() => loadConfig({ ...baseEnv, OPENCODE_BASE_URL: "ssh://localhost" })).toThrow(/http or https/);
+    expect(() => loadConfig({ ...baseEnv, OPENCODE_BASE_URL: "ssh://localhost" })).toThrow(
+      /http or https/,
+    );
   });
 });

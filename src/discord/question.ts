@@ -7,7 +7,8 @@ export function renderQuestionAsk(request: OpenCodeQuestionRequest): string {
     for (const option of question.options) {
       lines.push(`- \`${escapeInlineCode(option.label)}\` — ${option.description}`);
     }
-    if (question.multiple) lines.push("Multiple selections are allowed; separate labels with commas.");
+    if (question.multiple)
+      lines.push("Multiple selections are allowed; separate labels with commas.");
   }
   lines.push(
     "",
@@ -18,7 +19,10 @@ export function renderQuestionAsk(request: OpenCodeQuestionRequest): string {
   return lines.join("\n");
 }
 
-export function parseQuestionAnswers(text: string, questions: readonly OpenCodeQuestion[]): string[][] {
+export function parseQuestionAnswers(
+  text: string,
+  questions: readonly OpenCodeQuestion[],
+): string[][] {
   const rawAnswers =
     questions.length === 1
       ? [text.trim()]
