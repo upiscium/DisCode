@@ -8,6 +8,7 @@ export type AppConfig = {
   allowedUserIds: ReadonlySet<string>;
   allowPermissionAlways: boolean;
   streamAssistantText: boolean;
+  showToolSummaries: boolean;
   opencodeBaseUrl: string;
   opencodeUsername: string;
   opencodePassword?: string;
@@ -64,6 +65,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedUserIds,
     allowPermissionAlways: boolean(env.DISCORD_ALLOW_PERMISSION_ALWAYS, false),
     streamAssistantText: boolean(env.DISCORD_STREAM_ASSISTANT_TEXT, false),
+    showToolSummaries: boolean(env.DISCORD_SHOW_TOOL_SUMMARIES, false),
     opencodeBaseUrl: parsedUrl.toString().replace(/\/$/, ""),
     opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || "opencode",
     ...(password ? { opencodePassword: password } : {}),
