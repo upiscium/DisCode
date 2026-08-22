@@ -54,7 +54,7 @@ export class AssistantStreamingPublisher {
 
     switch (event.type) {
       case "message.updated": {
-        const sessionId = event.properties.sessionID;
+        const sessionId = event.properties.info.sessionID;
         if (!this.#state.getBySession(sessionId)) return;
         this.#buffer.observeMessage({
           sessionId,
