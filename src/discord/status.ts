@@ -1,4 +1,5 @@
 export type SessionStatusView = {
+  hostId: string;
   sessionId: string;
   status: "busy" | "retry" | "idle";
   directory: string;
@@ -36,6 +37,7 @@ export function renderSessionStatus(view: SessionStatusView): string {
   ].join(" ");
 
   return [
+    `Host: \`${escapeInlineCode(view.hostId)}\``,
     `Session \`${escapeInlineCode(view.sessionId)}\`: **${view.status}**`,
     `Directory: \`${escapeInlineCode(view.directory)}\``,
     "TUI attach on the OpenCode host:",
