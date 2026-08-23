@@ -1,6 +1,7 @@
 export type SessionBinding = {
   threadId: string;
   parentChannelId: string;
+  hostId: string;
   sessionId: string;
   directory: string;
   title: string;
