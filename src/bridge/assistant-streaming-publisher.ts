@@ -161,7 +161,10 @@ export class AssistantStreamingPublisher {
             body: { content },
           }),
         onPreviewEditError: (error) => {
-          console.error(`Failed to promote streaming preview for ${this.#hostId}/${sessionId}`, error);
+          console.error(
+            `Failed to promote streaming preview for ${this.#hostId}/${sessionId}`,
+            error,
+          );
         },
       });
 
