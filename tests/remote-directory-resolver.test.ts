@@ -11,7 +11,7 @@ const host = {
 
 describe("createOpenCodeDirectoryResolver", () => {
   it("returns the remote canonical directory and verifies directory listing", async () => {
-    const transport = vi.fn(async (input: URL | RequestInfo) => {
+    const transport = vi.fn(async (input: URL | RequestInfo, _init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/path") {
         return new Response(JSON.stringify({ directory: "/srv/projects/repo-real" }), {
@@ -48,7 +48,7 @@ describe("createOpenCodeDirectoryResolver", () => {
   });
 
   it("fails closed when OpenCode cannot list the canonical directory", async () => {
-    const transport = vi.fn(async (input: URL | RequestInfo) => {
+    const transport = vi.fn(async (input: URL | RequestInfo, _init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/path") {
         return new Response(JSON.stringify({ directory: "/srv/projects/repo" }), {
