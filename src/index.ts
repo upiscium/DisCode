@@ -8,8 +8,8 @@ import { DirectoryPolicy } from "./domain/directory-policy.js";
 import type { OpenCodeHostConfig } from "./domain/host-registry.js";
 import { OpenCodeSseMonitor } from "./opencode/diagnostics.js";
 import {
-  OpenCodeHostRuntimeRegistry,
   type OpenCodeHostRuntime,
+  OpenCodeHostRuntimeRegistry,
 } from "./opencode/host-runtime-registry.js";
 import { ObservedOpenCodeGateway } from "./opencode/observed-gateway.js";
 import { createOpenCodeDirectoryResolver } from "./opencode/remote-directory-resolver.js";
