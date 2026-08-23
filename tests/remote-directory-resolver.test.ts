@@ -47,6 +47,27 @@ describe("createOpenCodeDirectoryResolver", () => {
     );
   });
 
+  it("rejects a relative requested directory before contacting OpenCode", async () => {
+    const transport = vi.fn(async () => new Response("unexpected", { status: 500 }));
+    const resolveDirectory = createOpenCodeDirectoryResolver(host, transport as typeof fetch);
+
+    await expect(resolveDirectory("srv/projects/repo")).rejects.toThrow(/absolute path/);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-absolute canonical directory from OpenCode", async () => {
+    const transport = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ directory: "srv/projects/repo" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const resolveDirectory = createOpenCodeDirectoryResolver(host, transport as typeof fetch);
+
+    await expect(resolveDirectory("/srv/projects/repo")).rejects.toThrow(/non-absolute directory/);
+  });
+
   it("fails closed when OpenCode cannot list the canonical directory", async () => {
     const transport = vi.fn(async (input: URL | RequestInfo, _init?: RequestInit) => {
       const url = new URL(String(input));
