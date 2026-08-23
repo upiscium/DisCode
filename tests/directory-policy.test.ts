@@ -19,6 +19,24 @@ describe("DirectoryPolicy", () => {
     const link = join(root, "escape");
     await symlink(outside, link, "dir");
     const policy = await DirectoryPolicy.create([root]);
-    await expect(policy.authorize(link)).rejects.toThrow(/outside OPENCODE_ALLOWED_ROOTS/);
+    await expect(policy.authorize(link)).rejects.toThrow(/outside configured allowed roots/);
+  });
+
+  it("uses an injected resolver for remote canonical paths", async () => {
+    const resolved = new Map([
+      ["/srv/projects", "/srv/projects"],
+      ["/srv/projects/link", "/etc"],
+      ["/srv/projects/repo", "/srv/projects/repo"],
+    ]);
+    const policy = await DirectoryPolicy.createWithResolver(["/srv/projects"], async (value) => {
+      const result = resolved.get(value);
+      if (!result) throw new Error("missing");
+      return result;
+    });
+
+    await expect(policy.authorize("/srv/projects/repo")).resolves.toBe("/srv/projects/repo");
+    await expect(policy.authorize("/srv/projects/link")).rejects.toThrow(
+      /outside configured allowed roots/,
+    );
   });
 });
