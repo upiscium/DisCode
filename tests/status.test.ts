@@ -18,14 +18,16 @@ describe("status attach command rendering", () => {
     );
   });
 
-  it("renders status metadata and a credential-free attach command", () => {
+  it("renders host/status metadata and a credential-free attach command", () => {
     const rendered = renderSessionStatus({
+      hostId: "lab",
       sessionId: "ses_test",
       status: "idle",
       directory: "/tmp/project with spaces",
       baseUrl: "http://user:secret@127.0.0.1:4096",
     });
 
+    expect(rendered).toContain("Host: `lab`");
     expect(rendered).toContain("Session `ses_test`: **idle**");
     expect(rendered).toContain("Directory: `/tmp/project with spaces`");
     expect(rendered).toContain(
