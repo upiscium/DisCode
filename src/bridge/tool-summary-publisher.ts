@@ -56,10 +56,7 @@ export class ToolSummaryPublisher {
     switch (event.type) {
       case "message.updated": {
         const info = event.properties.info;
-        if (
-          info.role !== "assistant" ||
-          !this.#state.getBySession(this.#hostId, info.sessionID)
-        ) {
+        if (info.role !== "assistant" || !this.#state.getBySession(this.#hostId, info.sessionID)) {
           return;
         }
         if (this.#buffer.currentMessageId(info.sessionID) !== info.id) {
