@@ -1,27 +1,33 @@
 # OpenCodeDiscordBridge
 
-`OpenCodeDiscordBridge` is a small control plane that exposes an OpenCode session through a Discord thread without treating the terminal UI as an API.
+`OpenCodeDiscordBridge` is a small control plane that exposes OpenCode sessions through Discord threads without treating the terminal UI as an API.
 
-The OpenCode server is the source of truth. A local tmux session keeps `opencode serve` alive, an optional `opencode attach` window gives an SSH/TUI view, and this bridge is another client of the same OpenCode server through `@opencode-ai/sdk`.
+OpenCode servers are the source of truth. Local or remote OpenCode servers keep their own sessions authoritative, optional `opencode attach` clients provide TUI views, and this bridge is another API client through `@opencode-ai/sdk`.
 
-## MVP behavior
+## Behavior
 
-- `/oc start directory:<absolute-path> [title]` creates an OpenCode session and a Discord thread.
-- Plain text posted by an authorized user in that thread is sent with `session.promptAsync()`.
-- `question.asked` events are posted as **Ask** messages. The next authorized thread message answers the pending question through OpenCode's question API.
+- `/oc start directory:<absolute-path> [host:<configured-id>] [title]` creates an OpenCode session and a Discord thread.
+  - Omitting `host` uses the configured default host.
+  - `host` accepts only stable IDs from the operator-configured host registry; Discord cannot supply an arbitrary URL.
+- Plain text posted by an authorized user in a bound thread is sent with `session.promptAsync()` to that binding's host.
+- `question.asked` events are posted as **Ask** messages. The next authorized thread message answers the pending question through the same host's OpenCode question API.
 - `permission.updated` events are posted as Discord buttons.
   - `Allow once`
   - `Reject`
   - `Allow always` only when explicitly enabled by configuration.
-- `session.idle` publishes the latest completed assistant **Result** to the thread.
-- `/oc status` reports the bound OpenCode session state.
-- `/oc abort` asks OpenCode to abort the current turn.
-- `/oc health` reports OpenCode HTTP health plus global SSE readiness.
-- A persisted JSON binding lets the bridge reconnect a Discord thread to an existing OpenCode session after restart.
+- `session.idle` publishes the latest completed assistant **Result** to the correct host/thread binding.
+- `/oc status` reports Host ID, session state, directory, and a credential-free attach command for the bound host.
+- `/oc abort` asks the bound host's OpenCode server to abort the current turn.
+- `/oc close` deletes the bound OpenCode session, removes the binding, and archives the Discord thread.
+- `/oc unbind` removes only the Discord binding and leaves the OpenCode session alive.
+- `/oc health` currently reports the configured default host's HTTP health plus SSE readiness; aggregate multi-host health is a later Phase 3 step.
+- Persisted JSON bindings include `hostId`, allowing the bridge to reconnect each Discord thread to the correct OpenCode host after restart. Legacy state-v1 bindings without `hostId` migrate to the configured default host.
 
-For a multi-question Ask, reply with one line per question; for a multi-select question, separate selections with commas. A **Reject Ask** button is also provided. Pending Ask requests are reconciled from OpenCode when the bridge restarts.
+For a multi-question Ask, reply with one line per question; for a multi-select question, separate selections with commas. A **Reject Ask** button is also provided. Pending Ask requests are reconciled per host when the bridge restarts.
 
-Assistant streaming is optional and disabled by default. When `DISCORD_STREAM_ASSISTANT_TEXT=true`, assistant text is buffered and coalesced to a conservative update cadence before a single Discord preview message is edited. Reasoning and successful raw tool output are not streamed. `session.idle` still re-fetches the canonical assistant result and converges the preview to the final `✅ Result`.
+Assistant streaming is optional and disabled by default. When `DISCORD_STREAM_ASSISTANT_TEXT=true`, each host has an isolated streaming publisher. Assistant text is buffered and coalesced to a conservative update cadence before a single Discord preview message is edited. Reasoning and successful raw tool output are not streamed. `session.idle` still re-fetches the canonical assistant result and converges the preview to the final `✅ Result`.
+
+Tool-call summaries are also isolated per host so identical OpenCode session IDs on different hosts cannot cross-deliver preview or tool activity state.
 
 Discord attachments can be sent to an idle bound session as OpenCode FileParts. PNG, JPEG, WebP, GIF, PDF, and bounded UTF-8 text-like files are supported. The bridge accepts at most four attachments per message, 10 MiB per attachment, and 20 MiB total. Attachment bytes are fetched only from Discord attachment CDN URLs, validated in memory, converted to data URLs, and never written to the host filesystem. Archives, executables, unsupported binary files, redirects, and invalid media signatures are rejected. A pending Ask remains text-only.
 
@@ -30,54 +36,46 @@ Discord attachments can be sent to an idle bound session as OpenCode FileParts. 
 Discord is not a remote shell in this design.
 
 1. The bridge only accepts commands from `DISCORD_ALLOWED_USER_IDS` in one configured guild.
-2. `/oc start` accepts only real directories contained by the active host's configured allowed roots. Paths are resolved with `realpath`, so a symlink cannot escape the allowlist.
-3. Discord text becomes an OpenCode prompt. The bridge does not expose an endpoint that executes arbitrary shell commands directly.
-4. OpenCode remains responsible for tool and shell permissions. Permission requests are surfaced to Discord, but the policy decision still flows through OpenCode's permission API.
-5. The OpenCode server should stay on `127.0.0.1` and use `OPENCODE_SERVER_PASSWORD` even on a single-purpose host unless a deliberate secure transport is configured.
-6. State contains only thread/session metadata. Discord and OpenCode credentials are never persisted in the state file.
-7. Phase 3 host selection is based on operator-configured stable host IDs. Discord never supplies an arbitrary OpenCode URL or credential.
+2. Discord can select only a stable host ID from `OPENCODE_HOSTS_JSON`; it cannot provide an arbitrary host URL, hostname, username, or password.
+3. `/oc start` accepts only canonical directories contained by the selected host's configured allowed roots. For remote hosts, the bridge asks that OpenCode server for its canonical `/path` result and verifies directory accessibility through the OpenCode file API before creating a session. Symlink-resolved paths outside the allowlist are rejected.
+4. Discord text becomes an OpenCode prompt. The bridge does not expose an endpoint that executes arbitrary shell commands directly.
+5. OpenCode remains responsible for tool and shell permissions. Permission requests are surfaced to Discord, but the policy decision still flows through the selected OpenCode host's permission API.
+6. A local OpenCode server should stay on `127.0.0.1`. Remote OpenCode hosts should be reachable only over a deliberately secured network/transport and should still use server authentication.
+7. State contains only thread/session/host metadata. Discord and OpenCode credentials are never persisted in the state file.
+8. Host-registry passwords are referenced with `passwordEnv`; password values are not embedded in `OPENCODE_HOSTS_JSON` or exposed through registry serialization.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
 ## Host layout
 
 ```text
-Discord thread
-      |
-      v
-OpenCodeDiscordBridge
-      |
-      | @opencode-ai/sdk / SSE
-      v
-127.0.0.1:4096
-OpenCode Server
-      |
-      +---- OpenCode session A <---- Discord thread A
-      |             ^
-      |             |
-      |       optional TUI
-      |
-      +---- OpenCode session B <---- Discord thread B
-                    ^
-                    |
-              optional TUI
+                         +--> OpenCode host: local
+Discord thread A --+     |      session A
+                   |     |
+                   +--> OpenCodeDiscordBridge
+                   |     |
+Discord thread B --+     +--> OpenCode host: lab
+                                session B
 
-Dedicated tmux server (-L opencode-bridge)
-  session: opencode
-    window: server -> opencode serve
-    window: repo-A -> opencode attach ... --session ses_...
+Each configured host:
+  - has its own authenticated OpenCode gateway
+  - has its own global SSE consumer/readiness monitor
+  - has isolated assistant-stream/tool-summary state
+  - applies its own allowed-root policy
+
+Optional TUI clients attach directly to the same OpenCode session on the
+appropriate host. The Bridge never uses tmux send-keys or terminal scraping.
 ```
-
-The TUI and Discord bridge are peer clients. No ANSI parsing and no `tmux send-keys` are required.
 
 ## Requirements
 
 - Node.js 22+
-- OpenCode on the target host (the MVP is implemented against the 1.18.20 server/SDK API surface)
-- tmux on the target host
+- OpenCode on each configured target host (the bridge SDK is pinned to 1.18.20 with compatibility handling for newer server APIs used by the project)
+- tmux only where the provided local helper scripts are used
 - A dedicated Discord bot application
 - Discord bot scopes/permissions needed to use the configured text channel, create public threads, send messages, add reactions, and use application commands
 - The Discord **Message Content Intent** enabled, because ordinary thread messages are used as prompts
+- Network reachability from the Bridge process to every configured OpenCode host
 
 A Nix development shell is included:
 
@@ -85,7 +83,7 @@ A Nix development shell is included:
 nix develop
 ```
 
-OpenCode itself is intentionally not pinned in `flake.nix`; the host's existing OpenCode installation/configuration is reused.
+OpenCode itself is intentionally not pinned in `flake.nix`; each host's existing OpenCode installation/configuration is reused.
 
 ## Bootstrap
 
@@ -107,9 +105,9 @@ OPENCODE_SERVER_PASSWORD=<long-random-password>
 DISCORD_STREAM_ASSISTANT_TEXT=false
 ```
 
-The same `OPENCODE_SERVER_PASSWORD` environment variable should be present when the local tmux server and bridge are launched.
+With legacy configuration, the runtime host ID is `default`, preserving the previous single-host behavior.
 
-Phase 3 introduces an operator-configured host registry. The registry itself contains no password values: each host uses `passwordEnv` to reference a separate environment variable.
+For multi-host operation, configure a registry. The registry contains no password values: each host uses `passwordEnv` to reference a separate environment variable.
 
 ```dotenv
 OPENCODE_HOST_LOCAL_PASSWORD=<local-password>
@@ -119,11 +117,13 @@ OPENCODE_HOSTS_JSON={"defaultHost":"local","hosts":[{"id":"local","baseUrl":"htt
 
 Host IDs are lowercase stable tokens. Duplicate IDs, unknown default hosts, non-HTTP(S) URLs, URL userinfo, empty root lists, missing password environment variables, and unknown JSON fields are rejected at startup.
 
-During the host-registry foundation step, the configured `defaultHost` is projected into the existing single-host runtime path. `/oc start host:<id>`, per-host SSE consumers, gateway pooling, and multi-host health are added by later Phase 3 changes. This preserves the existing runtime while fixing the configuration and security contract first.
+Every configured host receives an independent gateway and SSE consumer. A persisted binding referencing a host that is no longer configured causes startup to fail rather than silently rerouting the session.
 
-Set `DISCORD_STREAM_ASSISTANT_TEXT=true` only when buffered progress previews are desired. The default `false` keeps the Phase 1 final-only behavior.
+Set `DISCORD_STREAM_ASSISTANT_TEXT=true` only when buffered progress previews are desired. The default `false` keeps final-only behavior.
 
-### 3. Start OpenCode in the dedicated tmux server
+### 3. Start a local OpenCode server with the helper (optional)
+
+For the Bridge machine's local OpenCode server:
 
 ```bash
 set -a
@@ -138,7 +138,7 @@ The helper uses a separate tmux socket/server by default:
 tmux -L opencode-bridge attach -t opencode
 ```
 
-This avoids accidentally depending on the environment of an unrelated, already-running tmux server.
+The helper manages only the local OpenCode server. The Discord bridge does not remotely start, stop, or control tmux sessions on configured remote hosts.
 
 ### 4. Install and start the bridge
 
@@ -153,19 +153,27 @@ npm start
 
 `src/index.ts` automatically loads `.env` when present.
 
-### 5. Create a Discord/OpenCode session
+### 5. Create Discord/OpenCode sessions
 
-From the configured guild:
+Use the default host:
 
 ```text
 /oc start directory:/home/upiscium/Documents/Programs/Terreate title:Terreate
 ```
 
-The bot creates a thread. From then on, normal text and supported attachments in that thread are sent to that OpenCode session.
+Or explicitly select a configured host:
 
-## Opening the same session in tmux/TUI
+```text
+/oc start directory:/srv/projects/Terreate host:lab title:Terreate-lab
+```
 
-The bot posts the OpenCode session ID in the new thread. On the host:
+The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, attachments, Ask/permission replies, lifecycle commands, Results, and managed-header updates are routed only to that host.
+
+## Opening the same session in TUI
+
+`/oc status` shows the bound Host ID and a credential-free `opencode attach` command using that host's configured base URL, session ID, and directory. Authentication is still supplied by the operator environment; credentials are never printed into Discord.
+
+For the local helper-managed host, you can also use:
 
 ```bash
 ./scripts/open-tui-window.sh \
@@ -175,7 +183,7 @@ The bot posts the OpenCode session ID in the new thread. On the host:
 tmux -L opencode-bridge attach -t opencode
 ```
 
-This is the same OpenCode session Discord is controlling, not a second session.
+This opens the same OpenCode session Discord is controlling, not a second session.
 
 ## Development gates
 
