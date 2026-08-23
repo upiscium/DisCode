@@ -1,5 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 
 export class DirectoryPolicyError extends Error {
   constructor(message: string) {
@@ -12,7 +12,7 @@ export type DirectoryResolver = (directory: string) => Promise<string>;
 
 function isInside(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
-  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`));
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
 async function localDirectoryResolver(requestedDirectory: string): Promise<string> {
@@ -36,7 +36,7 @@ export class DirectoryPolicy {
   }
 
   static async create(configuredRoots: readonly string[]): Promise<DirectoryPolicy> {
-    return this.createWithResolver(configuredRoots, localDirectoryResolver);
+    return DirectoryPolicy.createWithResolver(configuredRoots, localDirectoryResolver);
   }
 
   static async createWithResolver(
