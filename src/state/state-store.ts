@@ -2,6 +2,13 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { SessionBinding } from "../domain/session-binding.js";
 
+type PersistedSessionBinding = Omit<SessionBinding, "hostId"> & { hostId?: string };
+
+type PersistedStateFile = {
+  version: 1;
+  bindings: Record<string, PersistedSessionBinding>;
+};
+
 type StateFile = {
   version: 1;
   bindings: Record<string, SessionBinding>;
@@ -11,21 +18,33 @@ const emptyState = (): StateFile => ({ version: 1, bindings: {} });
 
 export class StateStore {
   readonly #path: string;
+  readonly #legacyDefaultHostId: string;
   #state: StateFile = emptyState();
   #writeQueue: Promise<void> = Promise.resolve();
 
-  constructor(path: string) {
+  constructor(path: string, legacyDefaultHostId = "default") {
     this.#path = path;
+    this.#legacyDefaultHostId = legacyDefaultHostId;
   }
 
   async load(): Promise<void> {
     try {
       const raw = await readFile(this.#path, "utf8");
-      const parsed = JSON.parse(raw) as Partial<StateFile>;
+      const parsed = JSON.parse(raw) as Partial<PersistedStateFile>;
       if (parsed.version !== 1 || !parsed.bindings || typeof parsed.bindings !== "object") {
         throw new Error(`Unsupported state file format: ${this.#path}`);
       }
-      this.#state = { version: 1, bindings: parsed.bindings };
+
+      let migrated = false;
+      const bindings = Object.fromEntries(
+        Object.entries(parsed.bindings).map(([threadId, binding]) => {
+          const hostId = binding.hostId?.trim() || this.#legacyDefaultHostId;
+          if (!binding.hostId?.trim()) migrated = true;
+          return [threadId, { ...binding, hostId } satisfies SessionBinding];
+        }),
+      );
+      this.#state = { version: 1, bindings };
+      if (migrated) await this.#persist();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         this.#state = emptyState();
@@ -40,8 +59,10 @@ export class StateStore {
     return value ? { ...value } : undefined;
   }
 
-  getBySession(sessionId: string): SessionBinding | undefined {
-    const value = Object.values(this.#state.bindings).find((item) => item.sessionId === sessionId);
+  getBySession(hostId: string, sessionId: string): SessionBinding | undefined {
+    const value = Object.values(this.#state.bindings).find(
+      (item) => item.hostId === hostId && item.sessionId === sessionId,
+    );
     return value ? { ...value } : undefined;
   }
 
