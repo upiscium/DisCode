@@ -23,6 +23,13 @@ const config = loadConfig();
 const defaultHostId = config.hostRegistry.defaultHost().id;
 const state = new StateStore(config.stateFile, defaultHostId);
 await state.load();
+for (const binding of state.list()) {
+  if (!config.hostRegistry.has(binding.hostId)) {
+    throw new Error(
+      `State binding ${binding.threadId} references unknown OpenCode host: ${binding.hostId}`,
+    );
+  }
+}
 
 const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime => {
   const streamingPublisher = new AssistantStreamingPublisher({
