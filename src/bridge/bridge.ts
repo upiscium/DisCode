@@ -27,7 +27,6 @@ import type { SessionBinding } from "../domain/session-binding.js";
 import { probeOpenCodeHealth } from "../opencode/diagnostics.js";
 import type {
   OpenCodeEvent,
-  OpenCodeGateway,
   OpenCodePermissionResponse,
   OpenCodeQuestionRequest,
 } from "../opencode/gateway.js";
@@ -102,7 +101,10 @@ export class Bridge {
     for (const runtime of this.#hosts.list()) {
       void this.#consumeOpenCodeEvents(runtime).catch((error) => {
         if (!this.#abortController.signal.aborted) {
-          console.error(`OpenCode event consumer stopped unexpectedly for host ${runtime.id}`, error);
+          console.error(
+            `OpenCode event consumer stopped unexpectedly for host ${runtime.id}`,
+            error,
+          );
         }
       });
     }
@@ -509,7 +511,11 @@ export class Bridge {
         break;
       case "session.error":
         if (event.properties.sessionID) {
-          await this.#publishSessionError(hostId, event.properties.sessionID, event.properties.error);
+          await this.#publishSessionError(
+            hostId,
+            event.properties.sessionID,
+            event.properties.error,
+          );
         }
         break;
       default:
