@@ -5,7 +5,14 @@ import { Bridge } from "./bridge/bridge.js";
 import { ToolSummaryPublisher } from "./bridge/tool-summary-publisher.js";
 import { loadConfig } from "./config.js";
 import { DirectoryPolicy } from "./domain/directory-policy.js";
+import type { OpenCodeHostConfig } from "./domain/host-registry.js";
+import { OpenCodeSseMonitor } from "./opencode/diagnostics.js";
+import {
+  OpenCodeHostRuntimeRegistry,
+  type OpenCodeHostRuntime,
+} from "./opencode/host-runtime-registry.js";
 import { ObservedOpenCodeGateway } from "./opencode/observed-gateway.js";
+import { createOpenCodeDirectoryResolver } from "./opencode/remote-directory-resolver.js";
 import { StateStore } from "./state/state-store.js";
 
 if (existsSync(".env")) {
@@ -13,26 +20,41 @@ if (existsSync(".env")) {
 }
 
 const config = loadConfig();
-const policy = await DirectoryPolicy.create(config.allowedRoots);
-const state = new StateStore(config.stateFile);
+const defaultHostId = config.hostRegistry.defaultHost().id;
+const state = new StateStore(config.stateFile, defaultHostId);
 await state.load();
-const streamingPublisher = new AssistantStreamingPublisher({
-  enabled: config.streamAssistantText,
-  discordToken: config.discordToken,
-  state,
+
+const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime => {
+  const streamingPublisher = new AssistantStreamingPublisher({
+    enabled: config.streamAssistantText,
+    hostId: host.id,
+    discordToken: config.discordToken,
+    state,
+  });
+  const toolSummaryPublisher = new ToolSummaryPublisher({
+    enabled: config.showToolSummaries,
+    hostId: host.id,
+    discordToken: config.discordToken,
+    state,
+  });
+  const gateway = new ObservedOpenCodeGateway({
+    baseUrl: host.baseUrl,
+    username: host.username,
+    ...(host.password ? { password: host.password } : {}),
+    observers: [toolSummaryPublisher, streamingPublisher],
+  });
+
+  return {
+    id: host.id,
+    config: host,
+    gateway,
+    sseMonitor: new OpenCodeSseMonitor(),
+    authorizeDirectory: lazyDirectoryAuthorizer(host),
+  };
 });
-const toolSummaryPublisher = new ToolSummaryPublisher({
-  enabled: config.showToolSummaries,
-  discordToken: config.discordToken,
-  state,
-});
-const opencode = new ObservedOpenCodeGateway({
-  baseUrl: config.opencodeBaseUrl,
-  username: config.opencodeUsername,
-  ...(config.opencodePassword ? { password: config.opencodePassword } : {}),
-  observers: [toolSummaryPublisher, streamingPublisher],
-});
-const bridge = new Bridge({ config, policy, state, opencode });
+
+const hosts = new OpenCodeHostRuntimeRegistry(defaultHostId, hostRuntimes);
+const bridge = new Bridge({ config, state, hosts });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
@@ -45,3 +67,19 @@ process.on("unhandledRejection", (error) => {
 });
 
 await bridge.start();
+
+function lazyDirectoryAuthorizer(host: OpenCodeHostConfig): (directory: string) => Promise<string> {
+  let policyPromise: Promise<DirectoryPolicy> | undefined;
+  return async (directory: string): Promise<string> => {
+    if (!policyPromise) {
+      policyPromise = DirectoryPolicy.createWithResolver(
+        host.allowedRoots,
+        createOpenCodeDirectoryResolver(host),
+      ).catch((error) => {
+        policyPromise = undefined;
+        throw error;
+      });
+    }
+    return (await policyPromise).authorize(directory);
+  };
+}
