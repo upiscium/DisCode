@@ -23,15 +23,17 @@ import { chunkDiscordText, renderAssistantResult, sanitizeThreadName } from "../
 import { renderHealthDiagnostic } from "../discord/health.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
 import { renderSessionStatus } from "../discord/status.js";
-import type { DirectoryPolicy } from "../domain/directory-policy.js";
 import type { SessionBinding } from "../domain/session-binding.js";
-import { OpenCodeSseMonitor, probeOpenCodeHealth } from "../opencode/diagnostics.js";
+import { probeOpenCodeHealth } from "../opencode/diagnostics.js";
 import type {
   OpenCodeEvent,
-  OpenCodeGateway,
   OpenCodePermissionResponse,
   OpenCodeQuestionRequest,
 } from "../opencode/gateway.js";
+import type {
+  OpenCodeHostRuntime,
+  OpenCodeHostRuntimeRegistry,
+} from "../opencode/host-runtime-registry.js";
 import type { StateStore } from "../state/state-store.js";
 import { SessionHeaderManager } from "./session-header-manager.js";
 import {
@@ -46,26 +48,22 @@ const QUESTION_PREFIX = "ocquestion";
 
 export class Bridge {
   readonly #config: AppConfig;
-  readonly #policy: DirectoryPolicy;
   readonly #state: StateStore;
-  readonly #opencode: OpenCodeGateway;
+  readonly #hosts: OpenCodeHostRuntimeRegistry;
   readonly #discord: Client;
   readonly #abortController = new AbortController();
   readonly #seenPermissions = new Set<string>();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
-  readonly #sseMonitor = new OpenCodeSseMonitor();
   readonly #sessionHeaders: SessionHeaderManager;
 
   constructor(options: {
     config: AppConfig;
-    policy: DirectoryPolicy;
     state: StateStore;
-    opencode: OpenCodeGateway;
+    hosts: OpenCodeHostRuntimeRegistry;
   }) {
     this.#config = options.config;
-    this.#policy = options.policy;
     this.#state = options.state;
-    this.#opencode = options.opencode;
+    this.#hosts = options.hosts;
     this.#discord = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -76,7 +74,7 @@ export class Bridge {
     this.#sessionHeaders = new SessionHeaderManager({
       discord: this.#discord,
       state: this.#state,
-      opencode: this.#opencode,
+      gatewayFor: (hostId) => this.#hosts.get(hostId).gateway,
     });
   }
 
@@ -100,11 +98,16 @@ export class Bridge {
     });
 
     await this.#discord.login(this.#config.discordToken);
-    void this.#consumeOpenCodeEvents().catch((error) => {
-      if (!this.#abortController.signal.aborted) {
-        console.error("OpenCode event consumer stopped unexpectedly", error);
-      }
-    });
+    for (const runtime of this.#hosts.list()) {
+      void this.#consumeOpenCodeEvents(runtime).catch((error) => {
+        if (!this.#abortController.signal.aborted) {
+          console.error(
+            `OpenCode event consumer stopped unexpectedly for host ${runtime.id}`,
+            error,
+          );
+        }
+      });
+    }
     await this.#reconcilePendingQuestions();
     await this.#reconcileSessionHeaders();
   }
@@ -199,8 +202,20 @@ export class Bridge {
 
   async #startSession(interaction: ChatInputCommandInteraction): Promise<void> {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const requestedHostId = interaction.options.getString("host")?.trim();
+    if (requestedHostId && !this.#hosts.has(requestedHostId)) {
+      await interaction.editReply(
+        `Unknown OpenCode host \`${escapeInlineCode(requestedHostId)}\`. Configured hosts: ${this.#hosts
+          .list()
+          .map((host) => `\`${escapeInlineCode(host.id)}\``)
+          .join(", ")}`,
+      );
+      return;
+    }
+    const runtime = requestedHostId ? this.#hosts.get(requestedHostId) : this.#hosts.defaultHost();
+
     const requestedDirectory = interaction.options.getString("directory", true);
-    const directory = await this.#policy.authorize(requestedDirectory);
+    const directory = await runtime.authorizeDirectory(requestedDirectory);
     const requestedTitle = interaction.options.getString("title")?.trim();
     const title =
       requestedTitle || directory.split("/").filter(Boolean).at(-1) || "OpenCode session";
@@ -210,18 +225,19 @@ export class Bridge {
       throw new Error("DISCORD_PARENT_CHANNEL_ID must refer to a guild text channel");
     }
 
-    const session = await this.#opencode.createSession(directory, title);
+    const session = await runtime.gateway.createSession(directory, title);
     let thread: ThreadChannel | undefined;
     try {
       thread = await parent.threads.create({
         name: sanitizeThreadName(title),
         autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-        reason: `OpenCode session ${session.id}`,
+        reason: `OpenCode session ${runtime.id}/${session.id}`,
       });
 
       const binding: SessionBinding = {
         threadId: thread.id,
         parentChannelId: parent.id,
+        hostId: runtime.id,
         sessionId: session.id,
         directory,
         title,
@@ -231,9 +247,9 @@ export class Bridge {
       await this.#state.put(binding);
       await this.#sessionHeaders.createInitialHeader(binding, thread);
       await interaction.editReply(
-        `Created <#${thread.id}> for OpenCode session \`${session.id}\`.`,
+        `Created <#${thread.id}> for OpenCode host \`${runtime.id}\`, session \`${session.id}\`.`,
       );
-      await this.#refreshSessionHeader(binding.sessionId);
+      await this.#refreshSessionHeader(runtime.id, binding.sessionId);
     } catch (error) {
       if (thread) {
         await this.#state.remove(thread.id).catch(() => undefined);
@@ -241,8 +257,8 @@ export class Bridge {
           .delete("Rolling back failed OpenCode bridge session creation")
           .catch(() => undefined);
       }
-      await this.#opencode.deleteSession(directory, session.id).catch((rollbackError) => {
-        console.error("Failed to roll back OpenCode session", rollbackError);
+      await runtime.gateway.deleteSession(directory, session.id).catch((rollbackError) => {
+        console.error(`Failed to roll back OpenCode session on host ${runtime.id}`, rollbackError);
       });
       throw error;
     }
@@ -250,12 +266,13 @@ export class Bridge {
 
   async #health(interaction: ChatInputCommandInteraction): Promise<void> {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const runtime = this.#hosts.defaultHost();
     const http = await probeOpenCodeHealth({
-      baseUrl: this.#config.opencodeBaseUrl,
-      username: this.#config.opencodeUsername,
-      ...(this.#config.opencodePassword ? { password: this.#config.opencodePassword } : {}),
+      baseUrl: runtime.config.baseUrl,
+      username: runtime.config.username,
+      ...(runtime.config.password ? { password: runtime.config.password } : {}),
     });
-    await interaction.editReply(renderHealthDiagnostic(http, this.#sseMonitor.status()));
+    await interaction.editReply(renderHealthDiagnostic(http, runtime.sseMonitor.status()));
   }
 
   async #status(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -267,13 +284,15 @@ export class Bridge {
       });
       return;
     }
-    const status = await this.#opencode.status(binding.directory, binding.sessionId);
+    const runtime = this.#runtimeFor(binding);
+    const status = await runtime.gateway.status(binding.directory, binding.sessionId);
     await interaction.reply({
       content: renderSessionStatus({
+        hostId: binding.hostId,
         sessionId: binding.sessionId,
         status: status?.type ?? "idle",
         directory: binding.directory,
-        baseUrl: this.#config.opencodeBaseUrl,
+        baseUrl: runtime.config.baseUrl,
       }),
       flags: MessageFlags.Ephemeral,
     });
@@ -288,9 +307,9 @@ export class Bridge {
       });
       return;
     }
-    await this.#opencode.abort(binding.directory, binding.sessionId);
+    await this.#runtimeFor(binding).gateway.abort(binding.directory, binding.sessionId);
     await interaction.reply({
-      content: `Abort requested for \`${binding.sessionId}\`.`,
+      content: `Abort requested for \`${binding.hostId}/${binding.sessionId}\`.`,
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -306,10 +325,11 @@ export class Bridge {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const status = await this.#opencode.status(binding.directory, binding.sessionId);
+    const runtime = this.#runtimeFor(binding);
+    const status = await runtime.gateway.status(binding.directory, binding.sessionId);
     const blocker = lifecycleBlockReason(
       status?.type,
-      this.#pendingQuestions.has(binding.sessionId),
+      this.#pendingQuestions.has(sessionKey(binding.hostId, binding.sessionId)),
     );
     if (blocker) {
       await interaction.editReply(renderLifecycleBlock(blocker));
@@ -317,19 +337,22 @@ export class Bridge {
     }
 
     await executeCloseMutation({
-      deleteSession: () => this.#opencode.deleteSession(binding.directory, binding.sessionId),
+      deleteSession: () => runtime.gateway.deleteSession(binding.directory, binding.sessionId),
       removeBinding: () => this.#state.remove(binding.threadId),
     });
-    this.#pendingQuestions.delete(binding.sessionId);
+    this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
 
     await interaction.editReply(
-      `Closed OpenCode session \`${binding.sessionId}\` and removed this Discord binding. Archiving the thread.`,
+      `Closed OpenCode session \`${binding.hostId}/${binding.sessionId}\` and removed this Discord binding. Archiving the thread.`,
     );
 
     try {
       const thread = await this.#fetchThread(binding.threadId);
       if (!thread) throw new Error("Bound Discord thread could not be fetched");
-      await thread.setArchived(true, `OpenCode session ${binding.sessionId} closed`);
+      await thread.setArchived(
+        true,
+        `OpenCode session ${binding.hostId}/${binding.sessionId} closed`,
+      );
     } catch (error) {
       await interaction.followUp({
         content: `The OpenCode session was deleted and unbound, but the Discord thread could not be archived: ${truncate(errorMessage(error), 1200)}`,
@@ -349,10 +372,11 @@ export class Bridge {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const status = await this.#opencode.status(binding.directory, binding.sessionId);
+    const runtime = this.#runtimeFor(binding);
+    const status = await runtime.gateway.status(binding.directory, binding.sessionId);
     const blocker = lifecycleBlockReason(
       status?.type,
-      this.#pendingQuestions.has(binding.sessionId),
+      this.#pendingQuestions.has(sessionKey(binding.hostId, binding.sessionId)),
     );
     if (blocker) {
       await interaction.editReply(renderLifecycleBlock(blocker));
@@ -362,10 +386,10 @@ export class Bridge {
     await executeUnbindMutation({
       removeBinding: () => this.#state.remove(binding.threadId),
     });
-    this.#pendingQuestions.delete(binding.sessionId);
+    this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     await interaction.editReply(
       [
-        `Unbound this thread from OpenCode session \`${binding.sessionId}\`.`,
+        `Unbound this thread from OpenCode session \`${binding.hostId}/${binding.sessionId}\`.`,
         "The OpenCode session still exists and can continue to be used from the TUI or API.",
         `Directory: \`${escapeInlineCode(binding.directory)}\``,
       ].join("\n"),
@@ -378,12 +402,14 @@ export class Bridge {
 
     const binding = this.#state.getByThread(message.channelId);
     if (!binding) return;
+    const runtime = this.#runtimeFor(binding);
 
     const text = message.content.trim();
     const hasAttachments = message.attachments.size > 0;
     if (!text && !hasAttachments) return;
 
-    const pendingQuestion = this.#pendingQuestions.get(binding.sessionId);
+    const pendingKey = sessionKey(binding.hostId, binding.sessionId);
+    const pendingQuestion = this.#pendingQuestions.get(pendingKey);
     if (pendingQuestion) {
       if (hasAttachments) {
         await message.reply("Attachments cannot answer a pending Ask. Send a text-only answer.");
@@ -391,8 +417,8 @@ export class Bridge {
       }
       try {
         const answers = parseQuestionAnswers(text, pendingQuestion.questions);
-        await this.#opencode.replyQuestion(binding.directory, pendingQuestion.id, answers);
-        this.#pendingQuestions.delete(binding.sessionId);
+        await runtime.gateway.replyQuestion(binding.directory, pendingQuestion.id, answers);
+        this.#pendingQuestions.delete(pendingKey);
         await message.reply(`↩️ Answer sent for Ask \`${pendingQuestion.id}\`.`);
       } catch (error) {
         await message.reply(`Could not parse the Ask answer: ${errorMessage(error)}`);
@@ -400,7 +426,7 @@ export class Bridge {
       return;
     }
 
-    const status = await this.#opencode.status(binding.directory, binding.sessionId);
+    const status = await runtime.gateway.status(binding.directory, binding.sessionId);
     if (status?.type === "busy" || status?.type === "retry") {
       await message.reply(
         `OpenCode is currently **${status.type}**. Wait for the current turn to finish or use \`/oc abort\`.`,
@@ -418,7 +444,7 @@ export class Bridge {
             url: attachment.url,
           })),
         );
-        await this.#opencode.promptAsyncWithFiles(
+        await runtime.gateway.promptAsyncWithFiles(
           binding.directory,
           binding.sessionId,
           text,
@@ -429,53 +455,67 @@ export class Bridge {
         return;
       }
     } else {
-      await this.#opencode.promptAsync(binding.directory, binding.sessionId, text);
+      await runtime.gateway.promptAsync(binding.directory, binding.sessionId, text);
     }
     await message.react("⏳").catch(() => undefined);
   }
 
-  async #consumeOpenCodeEvents(): Promise<void> {
-    for await (const globalEvent of this.#opencode.events(this.#abortController.signal)) {
-      this.#sseMonitor.observe();
-      await this.#handleOpenCodeEvent(globalEvent.payload, globalEvent.directory).catch((error) => {
-        console.error(`Failed to handle OpenCode event ${globalEvent.payload.type}`, error);
-      });
+  async #consumeOpenCodeEvents(runtime: OpenCodeHostRuntime): Promise<void> {
+    for await (const globalEvent of runtime.gateway.events(this.#abortController.signal)) {
+      runtime.sseMonitor.observe();
+      await this.#handleOpenCodeEvent(runtime.id, globalEvent.payload, globalEvent.directory).catch(
+        (error) => {
+          console.error(
+            `Failed to handle OpenCode event ${globalEvent.payload.type} for host ${runtime.id}`,
+            error,
+          );
+        },
+      );
     }
   }
 
-  async #handleOpenCodeEvent(event: OpenCodeEvent, directory: string): Promise<void> {
+  async #handleOpenCodeEvent(
+    hostId: string,
+    event: OpenCodeEvent,
+    directory: string,
+  ): Promise<void> {
     switch (event.type) {
       case "message.updated":
         if (event.properties.info.role === "user") {
-          await this.#refreshSessionHeader(event.properties.info.sessionID);
+          await this.#refreshSessionHeader(hostId, event.properties.info.sessionID);
         }
         break;
       case "vcs.branch.updated":
-        await this.#refreshHeadersForDirectory(directory);
+        await this.#refreshHeadersForDirectory(hostId, directory);
         break;
       case "permission.updated":
-        await this.#publishPermission(event);
+        await this.#publishPermission(hostId, event);
         break;
       case "permission.replied":
-        this.#seenPermissions.delete(event.properties.permissionID);
+        this.#seenPermissions.delete(permissionKey(hostId, event.properties.permissionID));
         break;
       case "question.asked":
-        await this.#publishQuestion(event.properties);
+        await this.#publishQuestion(hostId, event.properties);
         break;
       case "question.replied":
       case "question.rejected": {
-        const pending = this.#pendingQuestions.get(event.properties.sessionID);
+        const key = sessionKey(hostId, event.properties.sessionID);
+        const pending = this.#pendingQuestions.get(key);
         if (pending?.id === event.properties.requestID) {
-          this.#pendingQuestions.delete(event.properties.sessionID);
+          this.#pendingQuestions.delete(key);
         }
         break;
       }
       case "session.idle":
-        await this.#publishResult(event.properties.sessionID);
+        await this.#publishResult(hostId, event.properties.sessionID);
         break;
       case "session.error":
         if (event.properties.sessionID) {
-          await this.#publishSessionError(event.properties.sessionID, event.properties.error);
+          await this.#publishSessionError(
+            hostId,
+            event.properties.sessionID,
+            event.properties.error,
+          );
         }
         break;
       default:
@@ -483,52 +523,65 @@ export class Bridge {
     }
   }
 
-  async #refreshSessionHeader(sessionId: string): Promise<void> {
+  async #refreshSessionHeader(hostId: string, sessionId: string): Promise<void> {
     try {
-      await this.#sessionHeaders.refreshSession(sessionId);
+      await this.#sessionHeaders.refreshSession(hostId, sessionId);
     } catch (error) {
-      console.error(`Failed to refresh Discord session header for ${sessionId}`, error);
+      console.error(`Failed to refresh Discord session header for ${hostId}/${sessionId}`, error);
     }
   }
 
-  async #refreshHeadersForDirectory(directory: string): Promise<void> {
+  async #refreshHeadersForDirectory(hostId: string, directory: string): Promise<void> {
     for (const binding of this.#state.list()) {
-      if (binding.directory !== directory) continue;
-      await this.#refreshSessionHeader(binding.sessionId);
+      if (binding.hostId !== hostId || binding.directory !== directory) continue;
+      await this.#refreshSessionHeader(hostId, binding.sessionId);
     }
   }
 
   async #reconcileSessionHeaders(): Promise<void> {
     for (const binding of this.#state.list()) {
-      await this.#refreshSessionHeader(binding.sessionId);
+      await this.#refreshSessionHeader(binding.hostId, binding.sessionId);
     }
   }
 
   async #reconcilePendingQuestions(): Promise<void> {
-    const directories = [...new Set(this.#state.list().map((binding) => binding.directory))];
-    for (const directory of directories) {
-      try {
-        const questions = await this.#opencode.listQuestions(directory);
-        for (const question of questions) {
-          if (this.#state.getBySession(question.sessionID)) {
-            await this.#publishQuestion(question);
+    for (const runtime of this.#hosts.list()) {
+      const directories = [
+        ...new Set(
+          this.#state
+            .list()
+            .filter((binding) => binding.hostId === runtime.id)
+            .map((binding) => binding.directory),
+        ),
+      ];
+      for (const directory of directories) {
+        try {
+          const questions = await runtime.gateway.listQuestions(directory);
+          for (const question of questions) {
+            if (this.#state.getBySession(runtime.id, question.sessionID)) {
+              await this.#publishQuestion(runtime.id, question);
+            }
           }
+        } catch (error) {
+          console.error(
+            `Failed to reconcile pending OpenCode questions for ${runtime.id}:${directory}`,
+            error,
+          );
         }
-      } catch (error) {
-        console.error(`Failed to reconcile pending OpenCode questions for ${directory}`, error);
       }
     }
   }
 
-  async #publishQuestion(request: OpenCodeQuestionRequest): Promise<void> {
-    const current = this.#pendingQuestions.get(request.sessionID);
+  async #publishQuestion(hostId: string, request: OpenCodeQuestionRequest): Promise<void> {
+    const key = sessionKey(hostId, request.sessionID);
+    const current = this.#pendingQuestions.get(key);
     if (current?.id === request.id) return;
-    const binding = this.#state.getBySession(request.sessionID);
+    const binding = this.#state.getBySession(hostId, request.sessionID);
     if (!binding) return;
     const thread = await this.#fetchThread(binding.threadId);
     if (!thread) return;
 
-    this.#pendingQuestions.set(request.sessionID, request);
+    this.#pendingQuestions.set(key, request);
     const rendered = renderQuestionAsk(request);
     const chunks = chunkDiscordText(rendered, 1750);
     for (const [index, chunk] of chunks.entries()) {
@@ -550,21 +603,19 @@ export class Bridge {
   async #handleQuestionButton(interaction: ButtonInteraction): Promise<void> {
     const parsed = parseQuestionCustomId(interaction.customId);
     if (!parsed) return;
-    const binding = this.#state.getBySession(parsed.sessionId);
-    const pending = this.#pendingQuestions.get(parsed.sessionId);
-    if (
-      !binding ||
-      binding.threadId !== interaction.channelId ||
-      pending?.id !== parsed.requestId
-    ) {
+    const binding = this.#state.getByThread(interaction.channelId);
+    const pending = binding
+      ? this.#pendingQuestions.get(sessionKey(binding.hostId, binding.sessionId))
+      : undefined;
+    if (!binding || binding.sessionId !== parsed.sessionId || pending?.id !== parsed.requestId) {
       await interaction.reply({
         content: "This Ask is no longer pending for this thread.",
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
-    await this.#opencode.rejectQuestion(binding.directory, parsed.requestId);
-    this.#pendingQuestions.delete(parsed.sessionId);
+    await this.#runtimeFor(binding).gateway.rejectQuestion(binding.directory, parsed.requestId);
+    this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     await interaction.update({
       content: `${interaction.message.content}\n\nRejected by <@${interaction.user.id}>.`,
       components: [],
@@ -572,11 +623,13 @@ export class Bridge {
   }
 
   async #publishPermission(
+    hostId: string,
     event: Extract<OpenCodeEvent, { type: "permission.updated" }>,
   ): Promise<void> {
     const permission = event.properties;
-    if (this.#seenPermissions.has(permission.id)) return;
-    const binding = this.#state.getBySession(permission.sessionID);
+    const seenKey = permissionKey(hostId, permission.id);
+    if (this.#seenPermissions.has(seenKey)) return;
+    const binding = this.#state.getBySession(hostId, permission.sessionID);
     if (!binding) return;
 
     const thread = await this.#fetchThread(binding.threadId);
@@ -615,7 +668,7 @@ export class Bridge {
       ].join("\n"),
       components: [row],
     });
-    this.#seenPermissions.add(permission.id);
+    this.#seenPermissions.add(seenKey);
   }
 
   async #handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
@@ -628,8 +681,8 @@ export class Bridge {
       });
       return;
     }
-    const binding = this.#state.getBySession(parsed.sessionId);
-    if (!binding || binding.threadId !== interaction.channelId) {
+    const binding = this.#state.getByThread(interaction.channelId);
+    if (!binding || binding.sessionId !== parsed.sessionId) {
       await interaction.reply({
         content: "This permission request is no longer bound to this thread.",
         flags: MessageFlags.Ephemeral,
@@ -637,23 +690,25 @@ export class Bridge {
       return;
     }
 
-    await this.#opencode.replyPermission(
+    await this.#runtimeFor(binding).gateway.replyPermission(
       binding.directory,
       parsed.sessionId,
       parsed.permissionId,
       parsed.response,
     );
-    this.#seenPermissions.delete(parsed.permissionId);
+    this.#seenPermissions.delete(permissionKey(binding.hostId, parsed.permissionId));
     await interaction.update({
       content: `${interaction.message.content}\n\nResolved by <@${interaction.user.id}>: **${parsed.response}**`,
       components: [],
     });
   }
 
-  async #publishResult(sessionId: string): Promise<void> {
-    const binding = this.#state.getBySession(sessionId);
+  async #publishResult(hostId: string, sessionId: string): Promise<void> {
+    const binding = this.#state.getBySession(hostId, sessionId);
     if (!binding) return;
-    const result = await this.#opencode.latestAssistantResult(binding.directory, sessionId);
+    const result = await this.#hosts
+      .get(hostId)
+      .gateway.latestAssistantResult(binding.directory, sessionId);
     if (!result || result.messageId === binding.lastPublishedAssistantMessageId) return;
 
     const thread = await this.#fetchThread(binding.threadId);
@@ -666,8 +721,8 @@ export class Bridge {
     await this.#state.updateLastPublished(binding.threadId, result.messageId);
   }
 
-  async #publishSessionError(sessionId: string, error: unknown): Promise<void> {
-    const binding = this.#state.getBySession(sessionId);
+  async #publishSessionError(hostId: string, sessionId: string, error: unknown): Promise<void> {
+    const binding = this.#state.getBySession(hostId, sessionId);
     if (!binding) return;
     const thread = await this.#fetchThread(binding.threadId);
     if (!thread) return;
@@ -675,10 +730,22 @@ export class Bridge {
     await thread.send(`❌ **OpenCode session error**\n${truncate(details, 1800)}`);
   }
 
+  #runtimeFor(binding: SessionBinding): OpenCodeHostRuntime {
+    return this.#hosts.get(binding.hostId);
+  }
+
   async #fetchThread(threadId: string): Promise<ThreadChannel | undefined> {
     const channel = await this.#discord.channels.fetch(threadId);
     return channel?.isThread() ? channel : undefined;
   }
+}
+
+function sessionKey(hostId: string, sessionId: string): string {
+  return `${hostId}:${sessionId}`;
+}
+
+function permissionKey(hostId: string, permissionId: string): string {
+  return `${hostId}:${permissionId}`;
 }
 
 function permissionCustomId(

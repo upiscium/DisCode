@@ -10,6 +10,8 @@ import {
 import type { SessionBinding } from "../src/domain/session-binding.js";
 import type { OpenCodeEvent, OpenCodeGateway } from "../src/opencode/gateway.js";
 
+const HOST_ID = "local";
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -85,13 +87,14 @@ describe("AssistantStreamingPublisher", () => {
       binding = { ...binding, lastPublishedAssistantMessageId: messageId };
     });
     const state = {
-      getBySession: (sessionId: string) =>
-        sessionId === binding.sessionId ? { ...binding } : undefined,
+      getBySession: (hostId: string, sessionId: string) =>
+        hostId === binding.hostId && sessionId === binding.sessionId ? { ...binding } : undefined,
       updateLastPublished,
     };
     const transport = fakeTransport();
     const publisher = new AssistantStreamingPublisher({
       enabled: true,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state,
       transport,
@@ -132,6 +135,7 @@ describe("AssistantStreamingPublisher", () => {
     const gateway = finalResultGateway();
     const publisher = new AssistantStreamingPublisher({
       enabled: true,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state,
       transport: fakeTransport(),
@@ -154,6 +158,7 @@ describe("AssistantStreamingPublisher", () => {
     const gateway = finalResultGateway();
     const publisher = new AssistantStreamingPublisher({
       enabled: false,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state,
       transport,
@@ -170,6 +175,30 @@ describe("AssistantStreamingPublisher", () => {
     expect(transport.patch).not.toHaveBeenCalled();
     expect(gateway.latestAssistantResult).not.toHaveBeenCalled();
     expect(state.updateLastPublished).not.toHaveBeenCalled();
+  });
+
+  it("ignores a colliding session id that belongs to another host", async () => {
+    vi.useFakeTimers();
+    const binding = { ...testBinding(), hostId: "lab" };
+    const transport = fakeTransport();
+    const publisher = new AssistantStreamingPublisher({
+      enabled: true,
+      hostId: HOST_ID,
+      discordToken: "unused-test-token",
+      state: {
+        getBySession: (hostId, sessionId) =>
+          hostId === binding.hostId && sessionId === binding.sessionId ? binding : undefined,
+        updateLastPublished: vi.fn(async () => undefined),
+      },
+      transport,
+      flushIntervalMs: 10,
+    });
+
+    await publisher.handleEvent(assistantMessageEvent(), finalResultGateway());
+    await publisher.handleEvent(textPartEvent("cross-host"), finalResultGateway());
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(transport.post).not.toHaveBeenCalled();
   });
 });
 
@@ -205,6 +234,7 @@ function testBinding(): SessionBinding {
   return {
     threadId: "thread_1",
     parentChannelId: "parent_1",
+    hostId: HOST_ID,
     sessionId: "ses_1",
     directory: "/repo",
     title: "test",

@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { renderSessionHeader } from "../src/discord/session-header.js";
 
 describe("session header rendering", () => {
-  it("renders model, agent, and branch metadata", () => {
+  it("renders host, model, agent, and branch metadata", () => {
     const rendered = renderSessionHeader({
+      hostId: "lab",
       sessionId: "ses_test",
       directory: "/repo",
       model: { providerID: "openai", modelID: "gpt-5.6" },
@@ -11,6 +12,7 @@ describe("session header rendering", () => {
       branch: "feat/header",
     });
 
+    expect(rendered).toContain("Host: `lab`");
     expect(rendered).toContain("Session: `ses_test`");
     expect(rendered).toContain("Directory: `/repo`");
     expect(rendered).toContain("Model: `openai/gpt-5.6`");
@@ -20,7 +22,11 @@ describe("session header rendering", () => {
   });
 
   it("renders explicit placeholders before a model, agent, or branch is known", () => {
-    const rendered = renderSessionHeader({ sessionId: "ses_new", directory: "/repo" });
+    const rendered = renderSessionHeader({
+      hostId: "local",
+      sessionId: "ses_new",
+      directory: "/repo",
+    });
 
     expect(rendered).toContain("Model: `(not selected)`");
     expect(rendered).toContain("Agent: `(not selected)`");
@@ -29,6 +35,7 @@ describe("session header rendering", () => {
 
   it("neutralizes inline-code delimiters and newlines", () => {
     const rendered = renderSessionHeader({
+      hostId: "lab",
       sessionId: "ses_`test",
       directory: "/repo\nnext",
       agent: "build`agent",

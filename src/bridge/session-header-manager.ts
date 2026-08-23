@@ -4,31 +4,45 @@ import type { SessionBinding } from "../domain/session-binding.js";
 import type { OpenCodeGateway } from "../opencode/gateway.js";
 import type { StateStore } from "../state/state-store.js";
 
+type HeaderGateway = Pick<OpenCodeGateway, "sessionHeaderContext">;
+
 export class SessionHeaderManager {
   readonly #discord: Client;
   readonly #state: StateStore;
-  readonly #opencode: OpenCodeGateway;
+  readonly #gatewayFor: (hostId: string) => HeaderGateway;
 
-  constructor(options: { discord: Client; state: StateStore; opencode: OpenCodeGateway }) {
+  constructor(options: {
+    discord: Client;
+    state: StateStore;
+    gatewayFor: (hostId: string) => HeaderGateway;
+  }) {
     this.#discord = options.discord;
     this.#state = options.state;
-    this.#opencode = options.opencode;
+    this.#gatewayFor = options.gatewayFor;
   }
 
   async createInitialHeader(binding: SessionBinding, thread: ThreadChannel): Promise<void> {
     const message = await thread.send({
-      content: renderSessionHeader({ sessionId: binding.sessionId, directory: binding.directory }),
+      content: renderSessionHeader({
+        hostId: binding.hostId,
+        sessionId: binding.sessionId,
+        directory: binding.directory,
+      }),
       allowedMentions: { parse: [] },
     });
     await this.#state.updateHeaderMessageId(binding.threadId, message.id);
   }
 
-  async refreshSession(sessionId: string): Promise<void> {
-    const binding = this.#state.getBySession(sessionId);
+  async refreshSession(hostId: string, sessionId: string): Promise<void> {
+    const binding = this.#state.getBySession(hostId, sessionId);
     if (!binding) return;
 
-    const context = await this.#opencode.sessionHeaderContext(binding.directory, binding.sessionId);
+    const context = await this.#gatewayFor(hostId).sessionHeaderContext(
+      binding.directory,
+      binding.sessionId,
+    );
     const content = renderSessionHeader({
+      hostId: binding.hostId,
       sessionId: binding.sessionId,
       directory: binding.directory,
       ...context,

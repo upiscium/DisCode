@@ -22,6 +22,7 @@ export type DiscordMessageTransport = {
 
 export class AssistantStreamingPublisher {
   readonly #enabled: boolean;
+  readonly #hostId: string;
   readonly #state: StreamingStateStore;
   readonly #rest: DiscordMessageTransport;
   readonly #buffer = new AssistantTextStreamBuffer();
@@ -30,18 +31,20 @@ export class AssistantStreamingPublisher {
 
   constructor(options: {
     enabled: boolean;
+    hostId: string;
     discordToken: string;
     state: StreamingStateStore;
     flushIntervalMs?: number;
     transport?: DiscordMessageTransport;
   }) {
     this.#enabled = options.enabled;
+    this.#hostId = options.hostId;
     this.#state = options.state;
     this.#rest = options.transport ?? new REST({ version: "10" }).setToken(options.discordToken);
     this.#flusher = new CoalescedSessionFlusher(
       options.flushIntervalMs ?? 1000,
       (sessionId, error) => {
-        console.error(`Discord streaming preview failed for ${sessionId}`, error);
+        console.error(`Discord streaming preview failed for ${this.#hostId}/${sessionId}`, error);
       },
     );
   }
@@ -55,7 +58,7 @@ export class AssistantStreamingPublisher {
     switch (event.type) {
       case "message.updated": {
         const sessionId = event.properties.info.sessionID;
-        if (!this.#state.getBySession(sessionId)) return;
+        if (!this.#state.getBySession(this.#hostId, sessionId)) return;
         this.#buffer.observeMessage({
           sessionId,
           messageId: event.properties.info.id,
@@ -65,7 +68,7 @@ export class AssistantStreamingPublisher {
       }
       case "message.part.updated": {
         const part = event.properties.part;
-        if (!this.#state.getBySession(part.sessionID)) return;
+        if (!this.#state.getBySession(this.#hostId, part.sessionID)) return;
         const changed = this.#buffer.observePart({
           sessionId: part.sessionID,
           messageId: part.messageID,
@@ -78,7 +81,7 @@ export class AssistantStreamingPublisher {
       }
       case "message.part.delta": {
         const properties = event.properties;
-        if (!this.#state.getBySession(properties.sessionID)) return;
+        if (!this.#state.getBySession(this.#hostId, properties.sessionID)) return;
         const changed = this.#buffer.appendDelta({
           sessionId: properties.sessionID,
           messageId: properties.messageID,
@@ -107,7 +110,7 @@ export class AssistantStreamingPublisher {
   }
 
   async #flushPreview(sessionId: string): Promise<void> {
-    const binding = this.#state.getBySession(sessionId);
+    const binding = this.#state.getBySession(this.#hostId, sessionId);
     const snapshot = this.#buffer.snapshot(sessionId);
     if (!binding || !snapshot) return;
 
@@ -143,7 +146,7 @@ export class AssistantStreamingPublisher {
     }
 
     try {
-      const binding = this.#state.getBySession(sessionId);
+      const binding = this.#state.getBySession(this.#hostId, sessionId);
       if (!binding) return;
       const result = await gateway.latestAssistantResult(binding.directory, sessionId);
       if (!result || result.messageId === binding.lastPublishedAssistantMessageId) return;
@@ -158,7 +161,10 @@ export class AssistantStreamingPublisher {
             body: { content },
           }),
         onPreviewEditError: (error) => {
-          console.error(`Failed to promote streaming preview for ${sessionId}`, error);
+          console.error(
+            `Failed to promote streaming preview for ${this.#hostId}/${sessionId}`,
+            error,
+          );
         },
       });
 

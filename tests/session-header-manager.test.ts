@@ -9,6 +9,7 @@ import { StateStore } from "../src/state/state-store.js";
 const baseBinding = {
   threadId: "thread-1",
   parentChannelId: "parent-1",
+  hostId: "local",
   sessionId: "session-1",
   directory: "/repo",
   title: "repo",
@@ -18,7 +19,7 @@ const baseBinding = {
 
 async function fixture(options?: { headerMessageId?: string; existingContent?: string }) {
   const dir = await mkdtemp(join(tmpdir(), "ocdb-header-"));
-  const state = new StateStore(join(dir, "state.json"));
+  const state = new StateStore(join(dir, "state.json"), "local");
   await state.load();
   await state.put({
     ...baseBinding,
@@ -51,7 +52,10 @@ async function fixture(options?: { headerMessageId?: string; existingContent?: s
   const manager = new SessionHeaderManager({
     discord: discord as never,
     state,
-    opencode: opencode as never,
+    gatewayFor: (hostId) => {
+      expect(hostId).toBe("local");
+      return opencode as never;
+    },
   });
   return { manager, state, send, fetchMessage, edit };
 }
@@ -60,7 +64,7 @@ describe("SessionHeaderManager", () => {
   it("lazily creates and persists a managed header for legacy bindings", async () => {
     const { manager, state, send, fetchMessage } = await fixture();
 
-    await manager.refreshSession("session-1");
+    await manager.refreshSession("local", "session-1");
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(fetchMessage).not.toHaveBeenCalled();
@@ -69,6 +73,7 @@ describe("SessionHeaderManager", () => {
 
   it("skips Discord edits when the rendered header is unchanged", async () => {
     const content = renderSessionHeader({
+      hostId: "local",
       sessionId: "session-1",
       directory: "/repo",
       agent: "build",
@@ -80,7 +85,7 @@ describe("SessionHeaderManager", () => {
       existingContent: content,
     });
 
-    await manager.refreshSession("session-1");
+    await manager.refreshSession("local", "session-1");
 
     expect(edit).not.toHaveBeenCalled();
   });
@@ -91,9 +96,10 @@ describe("SessionHeaderManager", () => {
       existingContent: "old header",
     });
 
-    await manager.refreshSession("session-1");
+    await manager.refreshSession("local", "session-1");
 
     expect(edit).toHaveBeenCalledTimes(1);
+    expect(edit.mock.calls[0]?.[0]?.content).toContain("Host: `local`");
     expect(edit.mock.calls[0]?.[0]?.content).toContain("Branch: `feat/header`");
   });
 });

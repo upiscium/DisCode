@@ -1,5 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
-import { relative } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 
 export class DirectoryPolicyError extends Error {
   constructor(message: string) {
@@ -8,42 +8,68 @@ export class DirectoryPolicyError extends Error {
   }
 }
 
+export type DirectoryResolver = (directory: string) => Promise<string>;
+
 function isInside(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
-  return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
+
+async function localDirectoryResolver(requestedDirectory: string): Promise<string> {
+  const resolved = await realpath(requestedDirectory).catch(() => {
+    throw new DirectoryPolicyError(`Directory does not exist: ${requestedDirectory}`);
+  });
+  const metadata = await stat(resolved);
+  if (!metadata.isDirectory()) {
+    throw new DirectoryPolicyError(`Path is not a directory: ${requestedDirectory}`);
+  }
+  return resolved;
 }
 
 export class DirectoryPolicy {
   readonly #roots: readonly string[];
+  readonly #resolveDirectory: DirectoryResolver;
 
-  private constructor(roots: readonly string[]) {
+  private constructor(roots: readonly string[], resolveDirectory: DirectoryResolver) {
     this.#roots = roots;
+    this.#resolveDirectory = resolveDirectory;
   }
 
   static async create(configuredRoots: readonly string[]): Promise<DirectoryPolicy> {
+    return DirectoryPolicy.createWithResolver(configuredRoots, localDirectoryResolver);
+  }
+
+  static async createWithResolver(
+    configuredRoots: readonly string[],
+    resolveDirectory: DirectoryResolver,
+  ): Promise<DirectoryPolicy> {
     const roots = await Promise.all(
       configuredRoots.map(async (root) => {
-        const resolved = await realpath(root);
-        const metadata = await stat(resolved);
-        if (!metadata.isDirectory()) {
-          throw new DirectoryPolicyError(`Allowed root is not a directory: ${root}`);
+        try {
+          return await resolveDirectory(root);
+        } catch (error) {
+          if (error instanceof DirectoryPolicyError) throw error;
+          throw new DirectoryPolicyError(
+            `Allowed root is not a safe directory: ${root}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
-        return resolved;
       }),
     );
-    return new DirectoryPolicy([...new Set(roots)]);
+    return new DirectoryPolicy([...new Set(roots)], resolveDirectory);
   }
 
   async authorize(requestedDirectory: string): Promise<string> {
-    const resolved = await realpath(requestedDirectory).catch(() => {
-      throw new DirectoryPolicyError(`Directory does not exist: ${requestedDirectory}`);
-    });
-    const metadata = await stat(resolved);
-    if (!metadata.isDirectory()) {
-      throw new DirectoryPolicyError(`Path is not a directory: ${requestedDirectory}`);
+    let resolved: string;
+    try {
+      resolved = await this.#resolveDirectory(requestedDirectory);
+    } catch (error) {
+      if (error instanceof DirectoryPolicyError) throw error;
+      throw new DirectoryPolicyError(
+        `Directory is not accessible: ${requestedDirectory}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     if (!this.#roots.some((root) => isInside(root, resolved))) {
-      throw new DirectoryPolicyError(`Directory is outside OPENCODE_ALLOWED_ROOTS: ${resolved}`);
+      throw new DirectoryPolicyError(`Directory is outside configured allowed roots: ${resolved}`);
     }
     return resolved;
   }

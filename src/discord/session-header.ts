@@ -1,4 +1,5 @@
 export type SessionHeaderContext = {
+  hostId: string;
   sessionId: string;
   directory: string;
   model?: {
@@ -18,6 +19,7 @@ export function renderSessionHeader(context: SessionHeaderContext): string {
 
   return [
     "🤖 **OpenCode session**",
+    `Host: \`${inline(context.hostId, 100)}\``,
     `Session: \`${inline(context.sessionId, 200)}\``,
     `Directory: \`${inline(context.directory, 800)}\``,
     `Model: \`${inline(model, 400)}\``,

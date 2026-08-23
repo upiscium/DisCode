@@ -20,6 +20,7 @@ export type ToolSummaryTransport = {
 
 export class ToolSummaryPublisher {
   readonly #enabled: boolean;
+  readonly #hostId: string;
   readonly #state: ToolSummaryStateStore;
   readonly #rest: ToolSummaryTransport;
   readonly #buffer = new ToolActivityBuffer();
@@ -28,18 +29,20 @@ export class ToolSummaryPublisher {
 
   constructor(options: {
     enabled: boolean;
+    hostId: string;
     discordToken: string;
     state: ToolSummaryStateStore;
     flushIntervalMs?: number;
     transport?: ToolSummaryTransport;
   }) {
     this.#enabled = options.enabled;
+    this.#hostId = options.hostId;
     this.#state = options.state;
     this.#rest = options.transport ?? new REST({ version: "10" }).setToken(options.discordToken);
     this.#flusher = new CoalescedSessionFlusher(
       options.flushIntervalMs ?? 1000,
       (sessionId, error) => {
-        console.error(`Discord tool summary failed for ${sessionId}`, error);
+        console.error(`Discord tool summary failed for ${this.#hostId}/${sessionId}`, error);
       },
     );
   }
@@ -53,7 +56,9 @@ export class ToolSummaryPublisher {
     switch (event.type) {
       case "message.updated": {
         const info = event.properties.info;
-        if (info.role !== "assistant" || !this.#state.getBySession(info.sessionID)) return;
+        if (info.role !== "assistant" || !this.#state.getBySession(this.#hostId, info.sessionID)) {
+          return;
+        }
         if (this.#buffer.currentMessageId(info.sessionID) !== info.id) {
           await this.#flusher.cancelAndDrain(info.sessionID);
           await this.#flushSummary(info.sessionID);
@@ -65,7 +70,7 @@ export class ToolSummaryPublisher {
       case "message.part.updated": {
         const part = event.properties.part;
         if (part.type !== "tool") return;
-        const binding = this.#state.getBySession(part.sessionID);
+        const binding = this.#state.getBySession(this.#hostId, part.sessionID);
         if (!binding) return;
         const input = isRecord(part.state.input) ? part.state.input : {};
         const timing = toolTiming(part.state);
@@ -105,7 +110,7 @@ export class ToolSummaryPublisher {
   }
 
   async #flushSummary(sessionId: string): Promise<void> {
-    const binding = this.#state.getBySession(sessionId);
+    const binding = this.#state.getBySession(this.#hostId, sessionId);
     const assistantMessageId = this.#buffer.currentMessageId(sessionId);
     const items = this.#buffer.snapshot(sessionId);
     if (!binding || !assistantMessageId || items.length === 0) return;
