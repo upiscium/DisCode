@@ -6,6 +6,8 @@ import {
 import type { SessionBinding } from "../src/domain/session-binding.js";
 import type { OpenCodeEvent, OpenCodeGateway } from "../src/opencode/gateway.js";
 
+const HOST_ID = "local";
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -17,6 +19,7 @@ describe("ToolSummaryPublisher", () => {
     const transport = fakeTransport();
     const publisher = new ToolSummaryPublisher({
       enabled: true,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state: { getBySession: () => ({ ...binding }) },
       transport,
@@ -78,6 +81,7 @@ describe("ToolSummaryPublisher", () => {
     const transport = fakeTransport();
     const publisher = new ToolSummaryPublisher({
       enabled: true,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state: { getBySession: () => ({ ...binding }) },
       transport,
@@ -128,6 +132,7 @@ describe("ToolSummaryPublisher", () => {
     const transport = fakeTransport();
     const publisher = new ToolSummaryPublisher({
       enabled: true,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state: { getBySession: () => ({ ...binding }) },
       transport,
@@ -160,6 +165,7 @@ describe("ToolSummaryPublisher", () => {
     const transport = fakeTransport();
     const publisher = new ToolSummaryPublisher({
       enabled: true,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state: { getBySession: () => ({ ...binding }) },
       transport,
@@ -195,6 +201,7 @@ describe("ToolSummaryPublisher", () => {
     const transport = fakeTransport();
     const publisher = new ToolSummaryPublisher({
       enabled: false,
+      hostId: HOST_ID,
       discordToken: "unused-test-token",
       state: { getBySession: () => testBinding() },
       transport,
@@ -210,6 +217,32 @@ describe("ToolSummaryPublisher", () => {
 
     expect(transport.post).not.toHaveBeenCalled();
     expect(transport.patch).not.toHaveBeenCalled();
+  });
+
+  it("ignores a colliding session id bound to another host", async () => {
+    vi.useFakeTimers();
+    const binding = { ...testBinding(), hostId: "lab" };
+    const transport = fakeTransport();
+    const publisher = new ToolSummaryPublisher({
+      enabled: true,
+      hostId: HOST_ID,
+      discordToken: "unused-test-token",
+      state: {
+        getBySession: (hostId, sessionId) =>
+          hostId === binding.hostId && sessionId === binding.sessionId ? binding : undefined,
+      },
+      transport,
+      flushIntervalMs: 10,
+    });
+
+    await publisher.handleEvent(assistantMessageEvent(), gatewayStub());
+    await publisher.handleEvent(
+      toolEvent({ tool: "read", status: "completed", input: { filePath: "/repo/a" } }),
+      gatewayStub(),
+    );
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(transport.post).not.toHaveBeenCalled();
   });
 });
 
@@ -235,6 +268,7 @@ function testBinding(): SessionBinding {
   return {
     threadId: "thread_1",
     parentChannelId: "parent_1",
+    hostId: HOST_ID,
     sessionId: "ses_1",
     directory: "/repo",
     title: "test",
