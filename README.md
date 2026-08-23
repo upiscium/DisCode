@@ -30,11 +30,12 @@ Discord attachments can be sent to an idle bound session as OpenCode FileParts. 
 Discord is not a remote shell in this design.
 
 1. The bridge only accepts commands from `DISCORD_ALLOWED_USER_IDS` in one configured guild.
-2. `/oc start` accepts only real directories contained by `OPENCODE_ALLOWED_ROOTS`. Paths are resolved with `realpath`, so a symlink cannot escape the allowlist.
+2. `/oc start` accepts only real directories contained by the active host's configured allowed roots. Paths are resolved with `realpath`, so a symlink cannot escape the allowlist.
 3. Discord text becomes an OpenCode prompt. The bridge does not expose an endpoint that executes arbitrary shell commands directly.
 4. OpenCode remains responsible for tool and shell permissions. Permission requests are surfaced to Discord, but the policy decision still flows through OpenCode's permission API.
-5. The OpenCode server should stay on `127.0.0.1` and use `OPENCODE_SERVER_PASSWORD` even on a single-purpose host.
+5. The OpenCode server should stay on `127.0.0.1` and use `OPENCODE_SERVER_PASSWORD` even on a single-purpose host unless a deliberate secure transport is configured.
 6. State contains only thread/session metadata. Discord and OpenCode credentials are never persisted in the state file.
+7. Phase 3 host selection is based on operator-configured stable host IDs. Discord never supplies an arbitrary OpenCode URL or credential.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
@@ -96,7 +97,7 @@ Copy `.env.example` to `.env` and fill the Discord IDs/token. Keep `.env` out of
 
 ### 2. Configure the OpenCode boundary
 
-At minimum:
+The legacy single-host form remains supported and is the fallback when `OPENCODE_HOSTS_JSON` is unset:
 
 ```dotenv
 OPENCODE_ALLOWED_ROOTS=/home/upiscium/Documents/Programs
@@ -106,7 +107,19 @@ OPENCODE_SERVER_PASSWORD=<long-random-password>
 DISCORD_STREAM_ASSISTANT_TEXT=false
 ```
 
-The same `OPENCODE_SERVER_PASSWORD` environment variable should be present when the tmux server and bridge are launched.
+The same `OPENCODE_SERVER_PASSWORD` environment variable should be present when the local tmux server and bridge are launched.
+
+Phase 3 introduces an operator-configured host registry. The registry itself contains no password values: each host uses `passwordEnv` to reference a separate environment variable.
+
+```dotenv
+OPENCODE_HOST_LOCAL_PASSWORD=<local-password>
+OPENCODE_HOST_LAB_PASSWORD=<lab-password>
+OPENCODE_HOSTS_JSON={"defaultHost":"local","hosts":[{"id":"local","baseUrl":"http://127.0.0.1:4096","username":"opencode","passwordEnv":"OPENCODE_HOST_LOCAL_PASSWORD","allowedRoots":["/home/upiscium/Documents/Programs"]},{"id":"lab","baseUrl":"http://10.0.0.20:4096","username":"opencode","passwordEnv":"OPENCODE_HOST_LAB_PASSWORD","allowedRoots":["/srv/projects"]}]}
+```
+
+Host IDs are lowercase stable tokens. Duplicate IDs, unknown default hosts, non-HTTP(S) URLs, URL userinfo, empty root lists, missing password environment variables, and unknown JSON fields are rejected at startup.
+
+During the host-registry foundation step, the configured `defaultHost` is projected into the existing single-host runtime path. `/oc start host:<id>`, per-host SSE consumers, gateway pooling, and multi-host health are added by later Phase 3 changes. This preserves the existing runtime while fixing the configuration and security contract first.
 
 Set `DISCORD_STREAM_ASSISTANT_TEXT=true` only when buffered progress previews are desired. The default `false` keeps the Phase 1 final-only behavior.
 
