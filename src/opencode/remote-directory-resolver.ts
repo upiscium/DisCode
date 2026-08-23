@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import type { OpenCodeHostConfig } from "../domain/host-registry.js";
 
 export type DirectoryValidationTransport = typeof fetch;
@@ -9,6 +10,10 @@ export function createOpenCodeDirectoryResolver(
   const headers = authorizationHeaders(host);
 
   return async (requestedDirectory: string): Promise<string> => {
+    if (!isAbsolute(requestedDirectory)) {
+      throw new Error("OpenCode directory must be an absolute path");
+    }
+
     const pathUrl = new URL(`${host.baseUrl}/path`);
     pathUrl.searchParams.set("directory", requestedDirectory);
     const pathResponse = await transport(pathUrl, {
@@ -24,6 +29,9 @@ export function createOpenCodeDirectoryResolver(
       throw new Error("OpenCode path validation returned an invalid directory");
     }
     const canonicalDirectory = pathBody.directory;
+    if (!isAbsolute(canonicalDirectory)) {
+      throw new Error("OpenCode path validation returned a non-absolute directory");
+    }
 
     const listUrl = new URL(`${host.baseUrl}/file`);
     listUrl.searchParams.set("directory", canonicalDirectory);
