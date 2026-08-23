@@ -14,6 +14,11 @@ export const openCodeCommand = new SlashCommandBuilder()
           .setRequired(true),
       )
       .addStringOption((option) =>
+        option
+          .setName("host")
+          .setDescription("Configured OpenCode host ID (defaults to the configured default host)"),
+      )
+      .addStringOption((option) =>
         option.setName("title").setDescription("Optional session title"),
       ),
   )
