@@ -1,4 +1,3 @@
-import type { DirectoryPolicy } from "../domain/directory-policy.js";
 import type { OpenCodeHostConfig } from "../domain/host-registry.js";
 import type { OpenCodeSseMonitor } from "./diagnostics.js";
 import type { ObservedOpenCodeGateway } from "./observed-gateway.js";
@@ -6,7 +5,7 @@ import type { ObservedOpenCodeGateway } from "./observed-gateway.js";
 export type OpenCodeHostRuntime = Readonly<{
   id: string;
   config: OpenCodeHostConfig;
-  policy: DirectoryPolicy;
+  authorizeDirectory: (directory: string) => Promise<string>;
   gateway: ObservedOpenCodeGateway;
   sseMonitor: OpenCodeSseMonitor;
 }>;
