@@ -20,7 +20,7 @@ OpenCode servers are the source of truth. Local or remote OpenCode servers keep 
 - `/oc abort` asks the bound host's OpenCode server to abort the current turn.
 - `/oc close` deletes the bound OpenCode session, removes the binding, and archives the Discord thread.
 - `/oc unbind` removes only the Discord binding and leaves the OpenCode session alive.
-- `/oc health` currently reports the configured default host's HTTP health plus SSE readiness; aggregate multi-host health is a later Phase 3 step.
+- `/oc health` probes every configured host in parallel and reports aggregate plus per-host HTTP/SSE readiness. Host IDs are shown; URLs and credentials are not.
 - Persisted JSON bindings include `hostId`, allowing the bridge to reconnect each Discord thread to the correct OpenCode host after restart. Legacy state-v1 bindings without `hostId` migrate to the configured default host.
 
 For a multi-question Ask, reply with one line per question; for a multi-select question, separate selections with commas. A **Reject Ask** button is also provided. Pending Ask requests are reconciled per host when the bridge restarts.
@@ -118,6 +118,8 @@ OPENCODE_HOSTS_JSON={"defaultHost":"local","hosts":[{"id":"local","baseUrl":"htt
 Host IDs are lowercase stable tokens. Duplicate IDs, unknown default hosts, non-HTTP(S) URLs, URL userinfo, empty root lists, missing password environment variables, and unknown JSON fields are rejected at startup.
 
 Every configured host receives an independent gateway and SSE consumer. A persisted binding referencing a host that is no longer configured causes startup to fail rather than silently rerouting the session.
+
+`/oc health` performs authenticated `/global/health` probes for all configured hosts concurrently and combines them with each host's SSE freshness. The bridge is reported `ready` only when every host is HTTP-healthy and SSE-connected; otherwise the aggregate is `degraded` while healthy hosts remain visible individually.
 
 Set `DISCORD_STREAM_ASSISTANT_TEXT=true` only when buffered progress previews are desired. The default `false` keeps final-only behavior.
 

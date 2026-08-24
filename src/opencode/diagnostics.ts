@@ -7,12 +7,32 @@ export type OpenCodeHttpHealth =
 
 export type OpenCodeSseState = "connected" | "disconnected";
 
-export async function probeOpenCodeHealth(options: {
+export type OpenCodeHealthProbeOptions = Readonly<{
   baseUrl: string;
   username: string;
   password?: string;
   timeoutMs?: number;
-}): Promise<OpenCodeHttpHealth> {
+}>;
+
+export type OpenCodeHostHealthTarget = Readonly<{
+  id: string;
+  isDefault: boolean;
+  baseUrl: string;
+  username: string;
+  password?: string;
+  sse: OpenCodeSseState;
+}>;
+
+export type OpenCodeHostHealthDiagnostic = Readonly<{
+  id: string;
+  isDefault: boolean;
+  http: OpenCodeHttpHealth;
+  sse: OpenCodeSseState;
+}>;
+
+export async function probeOpenCodeHealth(
+  options: OpenCodeHealthProbeOptions,
+): Promise<OpenCodeHttpHealth> {
   const headers: Record<string, string> = {};
   if (options.password) {
     const credentials = Buffer.from(`${options.username}:${options.password}`, "utf8").toString(
@@ -51,6 +71,33 @@ export async function probeOpenCodeHealth(options: {
   } catch {
     return { kind: "unreachable" };
   }
+}
+
+export async function probeOpenCodeHostsHealth(
+  targets: readonly OpenCodeHostHealthTarget[],
+  probe: (options: OpenCodeHealthProbeOptions) => Promise<OpenCodeHttpHealth> = probeOpenCodeHealth,
+): Promise<readonly OpenCodeHostHealthDiagnostic[]> {
+  return Promise.all(
+    targets.map(async (target) => {
+      let http: OpenCodeHttpHealth;
+      try {
+        http = await probe({
+          baseUrl: target.baseUrl,
+          username: target.username,
+          ...(target.password ? { password: target.password } : {}),
+        });
+      } catch {
+        http = { kind: "unreachable" };
+      }
+
+      return {
+        id: target.id,
+        isDefault: target.isDefault,
+        http,
+        sse: target.sse,
+      };
+    }),
+  );
 }
 
 export class OpenCodeSseMonitor {

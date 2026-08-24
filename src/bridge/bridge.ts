@@ -24,7 +24,7 @@ import { renderHealthDiagnostic } from "../discord/health.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
 import { renderSessionStatus } from "../discord/status.js";
 import type { SessionBinding } from "../domain/session-binding.js";
-import { probeOpenCodeHealth } from "../opencode/diagnostics.js";
+import { probeOpenCodeHostsHealth } from "../opencode/diagnostics.js";
 import type {
   OpenCodeEvent,
   OpenCodePermissionResponse,
@@ -266,13 +266,18 @@ export class Bridge {
 
   async #health(interaction: ChatInputCommandInteraction): Promise<void> {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const runtime = this.#hosts.defaultHost();
-    const http = await probeOpenCodeHealth({
-      baseUrl: runtime.config.baseUrl,
-      username: runtime.config.username,
-      ...(runtime.config.password ? { password: runtime.config.password } : {}),
-    });
-    await interaction.editReply(renderHealthDiagnostic(http, runtime.sseMonitor.status()));
+    const defaultHostId = this.#hosts.defaultHost().id;
+    const health = await probeOpenCodeHostsHealth(
+      this.#hosts.list().map((runtime) => ({
+        id: runtime.id,
+        isDefault: runtime.id === defaultHostId,
+        baseUrl: runtime.config.baseUrl,
+        username: runtime.config.username,
+        ...(runtime.config.password ? { password: runtime.config.password } : {}),
+        sse: runtime.sseMonitor.status(),
+      })),
+    );
+    await interaction.editReply(renderHealthDiagnostic(health));
   }
 
   async #status(interaction: ChatInputCommandInteraction): Promise<void> {
