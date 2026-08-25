@@ -20,6 +20,7 @@ A narrow adapter between Discord and configured OpenCode hosts:
 - validates repository directory scope against that host's allowed roots;
 - forwards thread text and attachments as OpenCode prompts;
 - projects OpenCode questions, permissions, results, errors, tool summaries, and optional streaming into Discord;
+- aggregates per-host HTTP/SSE readiness for operator diagnostics;
 - persists only the mapping required to reconnect after restart.
 
 ### OpenCode policy/configuration
@@ -66,9 +67,17 @@ Per-host OpenCode global SSE
   -> permission.updated -> matching host/session binding -> Discord buttons
   -> session.idle       -> matching host/session binding -> canonical Result
   -> session.error      -> matching host/session binding -> Discord error
+
+/oc health
+  -> snapshot every configured host and its current SSE freshness
+  -> authenticated /global/health probe for every host in parallel
+  -> isolate each probe failure as that host's degraded HTTP state
+  -> render per-host ready/degraded plus aggregate Bridge readiness
 ```
 
 All session lookup used for event delivery is keyed by `(hostId, sessionId)`. Identical session IDs on two independent OpenCode hosts are therefore not interchangeable.
+
+A host is health-ready only when its HTTP probe reports healthy and its per-host global SSE monitor is connected. The aggregate Bridge health is `ready` only when every configured host is ready; otherwise it is `degraded`. Diagnostic output identifies hosts by stable ID and does not expose host URLs, usernames, or credentials.
 
 ## Remote directory validation
 
@@ -91,6 +100,8 @@ Creating a session is a two-system operation. If Discord thread creation or bind
 For normal operation, the state file is updated atomically by writing a temporary file and renaming it into place.
 
 An OpenCode event-stream disconnect is isolated to that host. Each gateway reconnects with bounded exponential backoff. Result publication is idempotent at the bridge level using `lastPublishedAssistantMessageId` in persisted state.
+
+Health probing is also isolated per host. `/oc health` probes all configured hosts concurrently; an unreachable or invalid host becomes a degraded entry without suppressing healthy results from other hosts.
 
 Permission messages are de-duplicated in memory by `(hostId, permission ID)`. Pending question state is keyed by `(hostId, sessionId)`. OpenCode remains the source of truth for whether either request is still pending.
 

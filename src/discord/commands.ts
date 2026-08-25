@@ -39,5 +39,5 @@ export const openCodeCommand = new SlashCommandBuilder()
       .setDescription("Detach this Discord thread without deleting the OpenCode session"),
   )
   .addSubcommand((command) =>
-    command.setName("health").setDescription("Show OpenCode bridge health and readiness"),
+    command.setName("health").setDescription("Show health for all configured OpenCode hosts"),
   );

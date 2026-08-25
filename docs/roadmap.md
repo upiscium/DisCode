@@ -32,9 +32,18 @@ Status: **Complete (2026-08-22)**
 
 ## Phase 3 — Multi-host
 
-Introduce a host registry instead of making Discord directly address arbitrary URLs. Each configured host should have a stable name, local credentials, allowed roots, and health state.
+Status: **Complete (2026-08-24)**
 
-Do not expose an arbitrary host/URL parameter to Discord commands.
+- Stable operator-configured host registry with per-host credentials and allowed roots.
+- Host-aware Discord bindings keyed by `(hostId, sessionId)`.
+- Per-host OpenCode gateways, SSE consumers, streaming state, and tool-summary state.
+- Remote host path canonicalization and allowed-root enforcement through the selected OpenCode server.
+- `/oc start host:<configured-id>` routing without arbitrary Discord-provided URLs.
+- Host-aware Ask, permission, Result, status, abort, close, unbind, and managed-header routing.
+- `/oc health` aggregate HTTP/SSE readiness across every configured host.
+- Multi-host real-environment E2E validation for routing, permission, Ask, status, and lifecycle isolation.
+
+Discord never accepts an arbitrary OpenCode URL, hostname, username, or credential.
 
 ## Phase 4 — Durable service operation
 

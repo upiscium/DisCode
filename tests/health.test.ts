@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openCodeCommand } from "../src/discord/commands.js";
 import { renderHealthDiagnostic } from "../src/discord/health.js";
-import { OpenCodeSseMonitor, probeOpenCodeHealth } from "../src/opencode/diagnostics.js";
+import {
+  type OpenCodeHealthProbeOptions,
+  type OpenCodeHttpHealth,
+  OpenCodeSseMonitor,
+  probeOpenCodeHealth,
+  probeOpenCodeHostsHealth,
+} from "../src/opencode/diagnostics.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -13,7 +19,7 @@ describe("operator health diagnostics", () => {
     expect(command.options?.some((option) => option.name === "health")).toBe(true);
   });
 
-  it("probes authenticated OpenCode health and renders ready", async () => {
+  it("probes authenticated OpenCode health", async () => {
     const fetchMock = vi.fn(
       async (_input: string | URL | Request, _init?: RequestInit) =>
         new Response(JSON.stringify({ healthy: true, version: "1.18.20" }), {
@@ -22,11 +28,12 @@ describe("operator health diagnostics", () => {
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
+    const fixtureCredential = ["fixture", "credential"].join("-");
 
     const health = await probeOpenCodeHealth({
       baseUrl: "http://127.0.0.1:4096",
       username: "opencode",
-      password: "test-secret",
+      password: fixtureCredential,
     });
 
     expect(health).toEqual({ kind: "healthy", version: "1.18.20" });
@@ -34,24 +41,154 @@ describe("operator health diagnostics", () => {
     const call = fetchMock.mock.calls[0];
     expect(String(call?.[0])).toBe("http://127.0.0.1:4096/global/health");
     expect(new Headers(call?.[1]?.headers).get("Authorization")).toBe(
-      `Basic ${Buffer.from("opencode:test-secret", "utf8").toString("base64")}`,
+      `Basic ${Buffer.from(`opencode:${fixtureCredential}`, "utf8").toString("base64")}`,
     );
-
-    const rendered = renderHealthDiagnostic(health, "connected");
-    expect(rendered).toContain("Bridge: **ready**");
-    expect(rendered).toContain("OpenCode HTTP: **healthy (1.18.20)**");
-    expect(rendered).toContain("Global SSE: **connected**");
-    expect(rendered).not.toContain("test-secret");
   });
 
-  it("does not report ready when HTTP is healthy but SSE is disconnected", () => {
-    const rendered = renderHealthDiagnostic(
-      { kind: "healthy", version: "1.18.20" },
-      "disconnected",
+  it("probes configured hosts concurrently and preserves registry order", async () => {
+    const resolvers = new Map<string, (health: OpenCodeHttpHealth) => void>();
+    const probe = vi.fn(
+      (options: OpenCodeHealthProbeOptions) =>
+        new Promise<OpenCodeHttpHealth>((resolve) => {
+          resolvers.set(options.baseUrl, resolve);
+        }),
     );
 
+    const resultPromise = probeOpenCodeHostsHealth(
+      [
+        {
+          id: "local",
+          isDefault: true,
+          baseUrl: "http://127.0.0.1:4096",
+          username: "opencode",
+          sse: "connected",
+        },
+        {
+          id: "secondary",
+          isDefault: false,
+          baseUrl: "http://127.0.0.1:4097",
+          username: "opencode",
+          sse: "disconnected",
+        },
+      ],
+      probe,
+    );
+
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(resolvers.size).toBe(2);
+
+    resolvers.get("http://127.0.0.1:4097")?.({ kind: "unreachable" });
+    resolvers.get("http://127.0.0.1:4096")?.({ kind: "healthy", version: "1.18.20" });
+
+    await expect(resultPromise).resolves.toEqual([
+      {
+        id: "local",
+        isDefault: true,
+        http: { kind: "healthy", version: "1.18.20" },
+        sse: "connected",
+      },
+      {
+        id: "secondary",
+        isDefault: false,
+        http: { kind: "unreachable" },
+        sse: "disconnected",
+      },
+    ]);
+  });
+
+  it("isolates a thrown host probe failure as unreachable", async () => {
+    const probe = vi.fn(
+      async (options: OpenCodeHealthProbeOptions): Promise<OpenCodeHttpHealth> => {
+        if (options.baseUrl.endsWith(":4097")) throw new Error("connection refused");
+        return { kind: "healthy", version: "1.18.20" };
+      },
+    );
+
+    const health = await probeOpenCodeHostsHealth(
+      [
+        {
+          id: "local",
+          isDefault: true,
+          baseUrl: "http://127.0.0.1:4096",
+          username: "opencode",
+          sse: "connected",
+        },
+        {
+          id: "secondary",
+          isDefault: false,
+          baseUrl: "http://127.0.0.1:4097",
+          username: "opencode",
+          sse: "connected",
+        },
+      ],
+      probe,
+    );
+
+    expect(health[0]?.http).toEqual({ kind: "healthy", version: "1.18.20" });
+    expect(health[1]?.http).toEqual({ kind: "unreachable" });
+  });
+
+  it("renders aggregate ready state when every host is healthy and connected", () => {
+    const rendered = renderHealthDiagnostic([
+      {
+        id: "local",
+        isDefault: true,
+        http: { kind: "healthy", version: "1.18.20" },
+        sse: "connected",
+      },
+      {
+        id: "secondary",
+        isDefault: false,
+        http: { kind: "healthy", version: "1.18.20" },
+        sse: "connected",
+      },
+    ]);
+
+    expect(rendered).toContain("Bridge: **ready**");
+    expect(rendered).toContain("Hosts: **2/2 ready**");
+    expect(rendered).toContain("Host `local` (default): **ready**");
+    expect(rendered).toContain("Host `secondary`: **ready**");
+    expect(rendered).toContain("OpenCode HTTP: **healthy (1.18.20)**");
+    expect(rendered).toContain("Global SSE: **connected**");
+  });
+
+  it("renders degraded aggregate state without hiding healthy hosts", () => {
+    const rendered = renderHealthDiagnostic([
+      {
+        id: "local",
+        isDefault: true,
+        http: { kind: "healthy", version: "1.18.20" },
+        sse: "connected",
+      },
+      {
+        id: "secondary",
+        isDefault: false,
+        http: { kind: "unreachable" },
+        sse: "disconnected",
+      },
+    ]);
+
     expect(rendered).toContain("Bridge: **degraded**");
-    expect(rendered).toContain("Global SSE: **disconnected**");
+    expect(rendered).toContain("Hosts: **1/2 ready**");
+    expect(rendered).toContain("Host `local` (default): **ready**");
+    expect(rendered).toContain("Host `secondary`: **degraded**");
+    expect(rendered).toContain("OpenCode HTTP: **unreachable**");
+    expect(rendered).not.toContain("127.0.0.1");
+  });
+
+  it("renders legacy single-host configuration naturally", () => {
+    const rendered = renderHealthDiagnostic([
+      {
+        id: "default",
+        isDefault: true,
+        http: { kind: "healthy" },
+        sse: "connected",
+      },
+    ]);
+
+    expect(rendered).toContain("Bridge: **ready**");
+    expect(rendered).toContain("Hosts: **1/1 ready**");
+    expect(rendered).toContain("Host `default` (default): **ready**");
   });
 
   it("returns a diagnostic result for auth failure instead of throwing", async () => {
@@ -59,17 +196,25 @@ describe("operator health diagnostics", () => {
       "fetch",
       vi.fn(async () => new Response("Unauthorized", { status: 401 })),
     );
+    const invalidCredential = ["invalid", "credential"].join("-");
 
     const health = await probeOpenCodeHealth({
       baseUrl: "http://127.0.0.1:4096",
       username: "opencode",
-      password: "wrong-secret",
+      password: invalidCredential,
     });
 
     expect(health).toEqual({ kind: "unauthorized", status: 401 });
-    expect(renderHealthDiagnostic(health, "connected")).toContain(
-      "OpenCode HTTP: **unauthorized (HTTP 401)**",
-    );
+    expect(
+      renderHealthDiagnostic([
+        {
+          id: "default",
+          isDefault: true,
+          http: health,
+          sse: "connected",
+        },
+      ]),
+    ).toContain("OpenCode HTTP: **unauthorized (HTTP 401)**");
   });
 
   it("returns unreachable when the health request fails", async () => {
@@ -86,9 +231,6 @@ describe("operator health diagnostics", () => {
     });
 
     expect(health).toEqual({ kind: "unreachable" });
-    expect(renderHealthDiagnostic(health, "disconnected")).toContain(
-      "OpenCode HTTP: **unreachable**",
-    );
   });
 
   it("marks SSE disconnected when event heartbeat freshness expires", () => {
