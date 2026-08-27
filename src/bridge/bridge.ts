@@ -28,6 +28,7 @@ import { type LoggerLike, noopLogger } from "../logging/logger.js";
 import { probeOpenCodeHostsHealth } from "../opencode/diagnostics.js";
 import type {
   OpenCodeEvent,
+  OpenCodePermissionRequest,
   OpenCodePermissionResponse,
   OpenCodeQuestionRequest,
 } from "../opencode/gateway.js";
@@ -36,6 +37,8 @@ import type {
   OpenCodeHostRuntimeRegistry,
 } from "../opencode/host-runtime-registry.js";
 import type { StateStore } from "../state/state-store.js";
+import { PermissionPublicationTracker } from "./permission-publication.js";
+import { reconcilePendingPermissions } from "./permission-reconciliation.js";
 import { SessionHeaderManager } from "./session-header-manager.js";
 import {
   executeCloseMutation,
@@ -54,7 +57,7 @@ export class Bridge {
   readonly #logger: LoggerLike;
   readonly #discord: Client;
   readonly #abortController = new AbortController();
-  readonly #seenPermissions = new Set<string>();
+  readonly #permissions = new PermissionPublicationTracker();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
   readonly #sessionHeaders: SessionHeaderManager;
 
@@ -123,6 +126,7 @@ export class Bridge {
       });
     }
     await this.#reconcilePendingQuestions();
+    await this.#reconcilePendingPermissions();
     await this.#reconcileSessionHeaders();
     this.#logger.info("bridge.started", "Bridge started", {
       host_count: this.#hosts.list().length,
@@ -409,6 +413,7 @@ export class Bridge {
       removeBinding: () => this.#state.remove(binding.threadId),
     });
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
+    this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.closed", "OpenCode session closed", {
       host_id: binding.hostId,
       session_id: binding.sessionId,
@@ -470,6 +475,7 @@ export class Bridge {
       removeBinding: () => this.#state.remove(binding.threadId),
     });
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
+    this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.unbound", "Discord thread unbound from OpenCode session", {
       host_id: binding.hostId,
       session_id: binding.sessionId,
@@ -581,12 +587,20 @@ export class Bridge {
       case "vcs.branch.updated":
         await this.#refreshHeadersForDirectory(hostId, directory);
         break;
-      case "permission.updated":
-        await this.#publishPermission(hostId, event);
-        break;
-      case "permission.replied":
-        this.#seenPermissions.delete(permissionKey(hostId, event.properties.permissionID));
-        break;
+      case "permission.updated": {
+      const permission = event.properties;
+      await this.#publishPermission(hostId, directory, {
+        id: permission.id,
+        sessionID: permission.sessionID,
+        type: permission.type,
+        title: permission.title,
+        pattern: permissionPatterns(permission.pattern),
+      });
+      break;
+    }
+    case "permission.replied":
+      this.#permissions.clear(hostId, event.properties.permissionID);
+      break;
       case "question.asked":
         await this.#publishQuestion(hostId, event.properties);
         break;
@@ -722,18 +736,30 @@ export class Bridge {
     });
   }
 
-  async #publishPermission(
-    hostId: string,
-    event: Extract<OpenCodeEvent, { type: "permission.updated" }>,
-  ): Promise<void> {
-    const permission = event.properties;
-    const seenKey = permissionKey(hostId, permission.id);
-    if (this.#seenPermissions.has(seenKey)) return;
-    const binding = this.#state.getBySession(hostId, permission.sessionID);
-    if (!binding) return;
+  async #reconcilePendingPermissions(): Promise<void> {
+  await reconcilePendingPermissions({
+    bindings: this.#state.list(),
+    hosts: this.#hosts.list().map((runtime) => ({
+      id: runtime.id,
+      listPermissions: (directory: string) => runtime.gateway.listPermissions(directory),
+    })),
+    publish: (hostId, directory, request) =>
+      this.#publishPermission(hostId, directory, request),
+    logger: this.#logger,
+  });
+}
 
+async #publishPermission(
+  hostId: string,
+  directory: string,
+  permission: OpenCodePermissionRequest,
+): Promise<void> {
+  const binding = this.#state.getBySession(hostId, permission.sessionID);
+  if (!binding || binding.directory !== directory) return;
+
+  await this.#permissions.publish(hostId, permission, async () => {
     const thread = await this.#fetchThread(binding.threadId);
-    if (!thread) return;
+    if (!thread) throw new Error("Bound Discord thread could not be fetched");
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -756,54 +782,76 @@ export class Bridge {
         .setStyle(ButtonStyle.Danger),
     );
 
-    const pattern = Array.isArray(permission.pattern)
-      ? permission.pattern.join(", ")
-      : permission.pattern;
+    const patternText = permission.pattern.join(", ");
     await thread.send({
       content: [
         "⚠️ **OpenCode permission requested**",
         `Title: ${truncate(permission.title, 500)}`,
         `Type: \`${escapeInlineCode(permission.type)}\``,
-        ...(pattern ? [`Pattern: \`${escapeInlineCode(truncate(pattern, 900))}\``] : []),
+        ...(patternText
+          ? [`Pattern: \`${escapeInlineCode(truncate(patternText, 900))}\``]
+          : []),
       ].join("\n"),
       components: [row],
     });
-    this.#seenPermissions.add(seenKey);
-  }
+  });
+}
 
-  async #handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
-    const parsed = parsePermissionCustomId(interaction.customId);
-    if (!parsed) return;
-    if (parsed.response === "always" && !this.#config.allowPermissionAlways) {
-      await interaction.reply({
-        content: "Persistent permission approval is disabled.",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    const binding = this.#state.getByThread(interaction.channelId);
-    if (!binding || binding.sessionId !== parsed.sessionId) {
-      await interaction.reply({
-        content: "This permission request is no longer bound to this thread.",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    await this.#runtimeFor(binding).gateway.replyPermission(
-      binding.directory,
-      parsed.sessionId,
-      parsed.permissionId,
-      parsed.response,
-    );
-    this.#seenPermissions.delete(permissionKey(binding.hostId, parsed.permissionId));
-    await interaction.update({
-      content: `${interaction.message.content}\n\nResolved by <@${interaction.user.id}>: **${parsed.response}**`,
-      components: [],
+async #handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
+  const parsed = parsePermissionCustomId(interaction.customId);
+  if (!parsed) return;
+  if (parsed.response === "always" && !this.#config.allowPermissionAlways) {
+    await interaction.reply({
+      content: "Persistent permission approval is disabled.",
+      flags: MessageFlags.Ephemeral,
     });
+    return;
   }
 
-  async #publishResult(hostId: string, sessionId: string): Promise<void> {
+  const binding = this.#state.getByThread(interaction.channelId);
+  const pending = binding
+    ? this.#permissions.current(binding.hostId, parsed.permissionId)
+    : undefined;
+  if (
+    !binding ||
+    binding.sessionId !== parsed.sessionId ||
+    pending?.sessionID !== parsed.sessionId
+  ) {
+    await interaction.reply({
+      content: "This permission request is no longer pending for this thread.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const runtime = this.#runtimeFor(binding);
+  const current = await runtime.gateway.listPermissions(binding.directory);
+  const stillPending = current.some(
+    (request) => request.id === parsed.permissionId && request.sessionID === parsed.sessionId,
+  );
+  if (!stillPending) {
+    this.#permissions.clear(binding.hostId, parsed.permissionId);
+    await interaction.reply({
+      content: "This permission request is no longer pending for this thread.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await runtime.gateway.replyPermission(
+    binding.directory,
+    parsed.sessionId,
+    parsed.permissionId,
+    parsed.response,
+  );
+  this.#permissions.clear(binding.hostId, parsed.permissionId);
+  await interaction.update({
+    content: `${interaction.message.content}\n\nResolved by <@${interaction.user.id}>: **${parsed.response}**`,
+    components: [],
+  });
+}
+
+async #publishResult(hostId: string, sessionId: string): Promise<void> {
     const binding = this.#state.getBySession(hostId, sessionId);
     if (!binding) return;
     const result = await this.#hosts
@@ -849,8 +897,12 @@ function sessionKey(hostId: string, sessionId: string): string {
   return `${hostId}:${sessionId}`;
 }
 
-function permissionKey(hostId: string, permissionId: string): string {
-  return `${hostId}:${permissionId}`;
+
+function permissionPatterns(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((pattern): pattern is string => typeof pattern === "string");
+  }
+  return typeof value === "string" && value ? [value] : [];
 }
 
 function permissionCustomId(
