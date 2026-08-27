@@ -13,6 +13,16 @@ type PublishedEntry = Readonly<{
 
 type PermissionEntry = PublishingEntry | PublishedEntry;
 
+export function hasPendingPermissionRequest(
+  requests: readonly OpenCodePermissionRequest[],
+  sessionId: string,
+  permissionId: string,
+): boolean {
+  return requests.some(
+    (request) => request.id === permissionId && request.sessionID === sessionId,
+  );
+}
+
 export class PermissionPublicationTracker {
   readonly #entries = new Map<string, PermissionEntry>();
 
