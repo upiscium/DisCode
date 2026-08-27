@@ -45,6 +45,7 @@ Discord is not a remote shell in this design.
 8. Host-registry passwords are referenced with `passwordEnv`; password values are not embedded in `OPENCODE_HOSTS_JSON` or exposed through registry serialization.
 9. A configured secret-file path is operator-controlled configuration. Discord cannot select or change it.
 10. Structured logs use stable identifiers rather than message payloads. Prompt text, Ask answers, tool output, attachment content, directory paths, and Discord user/guild IDs are not part of the normal log context, while credential-like fields and known secret values are redacted.
+11. Metrics are disabled by default and use a stricter low-cardinality policy than logs: session/thread IDs, paths, user/guild IDs, message content, URLs, usernames, and credentials are not metric labels or payload.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
@@ -177,7 +178,7 @@ JSON mode emits exactly one record per line. Example:
 {"timestamp":"2026-08-27T12:34:56.789Z","level":"info","event":"session.created","message":"OpenCode session created","host_id":"host-1","session_id":"ses_...","thread_id":"1234567890"}
 ```
 
-Stable lifecycle/failure event names include `bridge.starting`, `bridge.started`, `bridge.stopping`, `bridge.stopped`, `discord.connected`, `discord.interaction_failed`, `discord.message_failed`, `opencode.consumer_failed`, `opencode.observer_failed`, `opencode.stream_disconnected`, `session.created`, `session.closed`, `session.unbound`, and `session.rollback_failed`.
+Stable lifecycle/failure event names include `bridge.starting`, `bridge.started`, `bridge.stopping`, `bridge.stopped`, `discord.connected`, `discord.interaction_failed`, `discord.message_failed`, `opencode.consumer_failed`, `opencode.observer_failed`, `opencode.stream_disconnected`, `opencode.health_degraded`, `session.created`, `session.closed`, `session.unbound`, and `session.rollback_failed`.
 
 Log context is intentionally narrow. Host/session/thread IDs and coarse event/failure metadata are allowed; prompt/message text, Ask answers, raw tool output, attachment content, directory paths, Discord user/guild IDs, raw config objects, and raw Error stacks are not part of the normal logging contract. Credential-like fields are forcibly redacted, and the resolved Discord/OpenCode secrets are also used as value sentinels so accidental string inclusion is replaced with `[REDACTED]`.
 
@@ -188,7 +189,40 @@ journalctl -u opencode-discord-bridge -o cat \
   | jq 'select(.event == "session.created")'
 ```
 
-Phase 4C does not expose a Prometheus/OpenMetrics/OpenTelemetry listener. Metrics/export is a later phase after the structured event/context contract is validated.
+### Metrics
+
+The Prometheus/OpenMetrics scrape endpoint is explicitly opt-in and disabled by default:
+
+```dotenv
+OCB_METRICS_ENABLED=false
+OCB_METRICS_HOST=127.0.0.1
+OCB_METRICS_PORT=9464
+```
+
+When enabled, the Bridge exposes only `GET /metrics`. The default listener is loopback-only. If an enabled listener cannot bind, startup fails closed before Discord login. Shutdown closes the listener. The application does not provide metrics auth/TLS and the NixOS module does not open firewall ports; exposing a non-loopback address is an explicit deployment decision that must be protected externally.
+
+A local scrape can be inspected with:
+
+```bash
+curl --fail --silent http://127.0.0.1:9464/metrics
+```
+
+The initial metric family uses the `opencode_discord_bridge_` prefix and includes:
+
+```text
+opencode_discord_bridge_info{version="..."} 1
+opencode_discord_bridge_ready 0|1
+opencode_discord_bridge_opencode_host_http_healthy{host_id="..."} 0|1
+opencode_discord_bridge_opencode_host_sse_connected{host_id="..."} 0|1
+opencode_discord_bridge_bound_sessions{host_id="..."} N
+opencode_discord_bridge_session_operations_total{host_id="...",operation="created|closed|unbound"} N
+opencode_discord_bridge_health_probe_duration_seconds{host_id="..."} histogram
+opencode_discord_bridge_metrics_scrapes_total{result="success|error"} N
+```
+
+`ready` uses exactly the same semantics as `/oc health`: every configured host must be HTTP healthy and SSE connected. Each scrape performs the authenticated host health probes in parallel. Metrics scrapes suppress repeated `opencode.health_degraded` warning emission so normal Prometheus polling does not amplify logs.
+
+Metrics cardinality is intentionally stricter than structured logging. Only configured stable `host_id` values and fixed `operation`/`result` enums are labels. Session IDs, thread IDs, directory paths, Discord user/guild IDs, prompt/Ask/tool/output content, URLs, usernames, credentials, and arbitrary errors are not exported. `bound_sessions` is calculated from persisted StateStore contents at scrape time; lifecycle operation counters are process-lifetime counters and may reset after restart.
 
 ### 3. Start a local OpenCode server with the helper (optional)
 
@@ -240,7 +274,7 @@ The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, 
 
 ## NixOS service operation
 
-The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, to keep secrets in `~/secrets/ocb_secrets.env` owned by an existing user:
+The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, to keep secrets in `~/secrets/ocb_secrets.env` owned by an existing user and explicitly enable loopback metrics:
 
 ```nix
 {
@@ -261,6 +295,11 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
             environmentFile = "/run/opencode-discord-bridge.env";
             logLevel = "info";
             logFormat = "json";
+            metrics = {
+              enable = true;
+              address = "127.0.0.1";
+              port = 9464;
+            };
             stateDirectory = "opencode-discord-bridge";
           };
         }
@@ -274,7 +313,7 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
 
 `environmentFile` and `environment` remain available for non-secret or legacy configuration. `STATE_FILE` is controlled by the module and placed under `/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed `environmentFile` paths as well.
 
-The NixOS module defaults to `logLevel = "info"` and `logFormat = "json"`. These are passed as ordinary non-secret environment settings and can be overridden explicitly.
+The NixOS module defaults to `logLevel = "info"`, `logFormat = "json"`, and `metrics.enable = false`. If metrics are enabled, their defaults remain `address = "127.0.0.1"` and `port = 9464`; the module does not add the port to `networking.firewall.allowedTCPPorts`.
 
 By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session.
 
