@@ -5,9 +5,9 @@ import {
   type OpenCodeHostHealthProbeOptions,
   type OpenCodeHostHealthTarget,
   type OpenCodeHttpHealth,
+  type OpenCodeSseState,
   probeOpenCodeHostsHealth,
 } from "../opencode/diagnostics.js";
-import type { OpenCodeHostRuntime } from "../opencode/host-runtime-registry.js";
 
 export type SessionMetricOperation = "created" | "closed" | "unbound";
 export type MetricsScrapeResult = "success" | "error";
@@ -21,7 +21,17 @@ export type MetricsExporterLike = {
   scrape(): Promise<MetricsSnapshot>;
 };
 
-type MetricsHostRuntime = Pick<OpenCodeHostRuntime, "id" | "config" | "sseMonitor">;
+type MetricsHostRuntime = Readonly<{
+  id: string;
+  config: Readonly<{
+    baseUrl: string;
+    username: string;
+    password?: string;
+  }>;
+  sseMonitor: Readonly<{
+    status(): OpenCodeSseState;
+  }>;
+}>;
 
 type MetricsHostSource = {
   defaultHost(): MetricsHostRuntime;
@@ -46,7 +56,7 @@ type ProbeHosts = (
     id: string;
     isDefault: boolean;
     http: OpenCodeHttpHealth;
-    sse: "connected" | "disconnected";
+    sse: OpenCodeSseState;
   }>[]
 >;
 
