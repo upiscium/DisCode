@@ -32,7 +32,7 @@ Status: **Complete (2026-08-22)**
 
 ## Phase 3 — Multi-host
 
-Status: **Complete (2026-08-24)**
+Status: **Complete (2026-08-27, including real-environment health E2E)**
 
 - Stable operator-configured host registry with per-host credentials and allowed roots.
 - Host-aware Discord bindings keyed by `(hostId, sessionId)`.
@@ -41,17 +41,19 @@ Status: **Complete (2026-08-24)**
 - `/oc start host:<configured-id>` routing without arbitrary Discord-provided URLs.
 - Host-aware Ask, permission, Result, status, abort, close, unbind, and managed-header routing.
 - `/oc health` aggregate HTTP/SSE readiness across every configured host.
-- Multi-host real-environment E2E validation for routing, permission, Ask, status, and lifecycle isolation.
+- Multi-host real-environment E2E validation for routing, permission, Ask, status, lifecycle isolation, and health fail/recovery.
 
 Discord never accepts an arbitrary OpenCode URL, hostname, username, or credential.
 
 ## Phase 4 — Durable service operation
 
-- systemd/NixOS service for the bridge itself;
-- secret injection through credentials rather than `.env` where appropriate;
-- structured logging and metrics;
-- state migration strategy or SQLite if concurrency/lifecycle complexity justifies it;
-- reconnection reconciliation for pending permissions.
+Status: **In progress (2026-08-27)**
+
+- Phase 4A / Issue #34: reproducible Nix package plus NixOS/systemd service lifecycle.
+- Secret injection through systemd credentials rather than `.env` where appropriate.
+- Structured logging and metrics.
+- State migration strategy or SQLite if concurrency/lifecycle complexity justifies it.
+- Reconnection reconciliation for pending permissions.
 
 ## Separate infrastructure work
 

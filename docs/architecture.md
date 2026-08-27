@@ -109,6 +109,21 @@ Pending question requests are queried per host during bridge startup so an Ask t
 
 If persisted state references a host ID that no longer exists in the registry, startup fails rather than silently rerouting that binding to another server.
 
+## Service/runtime lifecycle
+
+The flake package contains only the Bridge runtime and its Node dependencies. It does not bundle, launch, or supervise OpenCode servers; each configured server remains an independent authority and lifecycle domain.
+
+The NixOS module gives systemd ownership of Bridge process lifecycle:
+
+- the unit waits for `network-online.target` before startup;
+- abnormal Bridge exits are restarted with `Restart=on-failure`;
+- stop/restart sends `SIGTERM`, which enters the Bridge's existing shutdown path;
+- `StateDirectory` provides a persistent writable `/var/lib/<name>` location and the module supplies `STATE_FILE` from that location;
+- a Bridge restart therefore preserves bindings without coupling OpenCode session lifetime to the Bridge process;
+- stopping the Bridge does not stop, abort, migrate, or delete OpenCode server sessions.
+
+Runtime configuration can be supplied through a systemd `EnvironmentFile` outside the Nix store. The module rejects a store-backed `environmentFile` path so tokens and OpenCode passwords are not accidentally materialized into a world-readable store object. Direct `LoadCredential=` application support is a later Phase 4 boundary; the current service layer intentionally preserves the existing environment-variable config contract.
+
 ## Threat model assumptions
 
 - The Bridge process and configured host registry are trusted operator infrastructure.

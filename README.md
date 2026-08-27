@@ -83,7 +83,14 @@ A Nix development shell is included:
 nix develop
 ```
 
-OpenCode itself is intentionally not pinned in `flake.nix`; each host's existing OpenCode installation/configuration is reused.
+The Bridge runtime is also exposed as a reproducible flake package:
+
+```bash
+nix build
+./result/bin/opencode-discord-bridge
+```
+
+OpenCode itself is intentionally not pinned or bundled by the Bridge package; each host's existing OpenCode installation/configuration remains authoritative.
 
 ## Bootstrap
 
@@ -171,6 +178,38 @@ Or explicitly select a configured host:
 
 The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, attachments, Ask/permission replies, lifecycle commands, Results, and managed-header updates are routed only to that host.
 
+## NixOS service operation
+
+The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service:
+
+```nix
+{
+  inputs.opencode-discord-bridge.url = "github:upiscium/OpencodeDiscordBridge";
+
+  outputs = { nixpkgs, opencode-discord-bridge, ... }: {
+    nixosConfigurations.bridge-host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        opencode-discord-bridge.nixosModules.default
+        {
+          services.opencode-discord-bridge = {
+            enable = true;
+            environmentFile = "/run/secrets/opencode-discord-bridge.env";
+            stateDirectory = "opencode-discord-bridge";
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+The environment file uses the same variables documented in `.env.example`, except `STATE_FILE`: the module owns that value and places state under `/var/lib/<stateDirectory>/<stateFile>`. Keep the environment file outside the Nix store; the module rejects store paths for `environmentFile`. `services.opencode-discord-bridge.environment` is available only for non-secret values because Nix-declared strings become part of the system configuration/store.
+
+By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session.
+
+Direct systemd `LoadCredential=` integration is intentionally deferred to the next Phase 4 change; this module preserves the existing environment-variable application contract without placing credential values in the Nix store.
+
 ## Opening the same session in TUI
 
 `/oc status` shows the bound Host ID and a credential-free `opencode attach` command using that host's configured base URL, session ID, and directory. Authentication is still supplied by the operator environment; credentials are never printed into Discord.
@@ -194,8 +233,10 @@ npm run lint
 npm run typecheck
 npm test
 npm run check
+nix build
+nix flake check
 ```
 
-CI uses `npm ci` and the committed lockfile before running the same `npm run check` quality gate.
+CI uses `npm ci` and the committed lockfile before running the Node quality gate, and separately builds/checks the Nix package and module.
 
 See `docs/architecture.md`, `docs/adr/0001-opencode-server-as-source-of-truth.md`, and `docs/roadmap.md` for the design boundary and next stages.
