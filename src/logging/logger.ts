@@ -29,7 +29,8 @@ const REDACTED = "[REDACTED]";
 const OMITTED = "[OMITTED]";
 const SENSITIVE_KEY = /(token|password|authorization|secret|credential)/i;
 const CONTENT_KEY =
-  /(^|_)(prompt|answer|tool_output|attachment_content|message_content|raw_content|content)($|_)/i;
+  /(^|_)(prompt|answer|ask_answer|tool_output|tool_result|raw_output|attachment_content|message_content|message_text|raw_content|content)($|_)/i;
+const PRIVATE_CONTEXT_KEY = /(^|_)(directory|user_id|guild_id)($|_)/i;
 
 export class Logger implements LoggerLike {
   readonly #level: LogLevel;
@@ -80,7 +81,12 @@ export class Logger implements LoggerLike {
     if (error !== undefined) {
       const normalized = normalizeError(error);
       record.error_type = this.#redactString(normalized.type);
-      record.error_message = this.#redactString(normalized.message);
+      if (normalized.code !== undefined) {
+        record.error_code =
+          typeof normalized.code === "string"
+            ? this.#redactString(normalized.code)
+            : normalized.code;
+      }
     }
 
     this.#write(this.#format === "json" ? JSON.stringify(record) : formatPretty(record));
@@ -89,7 +95,7 @@ export class Logger implements LoggerLike {
   #sanitizeField(key: string, value: unknown): string | number | boolean | null | undefined {
     if (value === undefined) return undefined;
     if (SENSITIVE_KEY.test(key)) return REDACTED;
-    if (CONTENT_KEY.test(key)) return OMITTED;
+    if (CONTENT_KEY.test(key) || PRIVATE_CONTEXT_KEY.test(key)) return OMITTED;
     if (value === null || typeof value === "number" || typeof value === "boolean") return value;
     if (typeof value === "string") return this.#redactString(value);
     return OMITTED;
@@ -135,15 +141,15 @@ export function parseLogFormat(
   throw new Error("OCB_LOG_FORMAT must be one of: json, pretty");
 }
 
-function normalizeError(error: unknown): { type: string; message: string } {
+function normalizeError(error: unknown): { type: string; code?: string | number } {
   if (error instanceof Error) {
+    const code = (error as Error & { code?: unknown }).code;
     return {
       type: error.name || "Error",
-      message: error.message || "Error without message",
+      ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
     };
   }
-  if (typeof error === "string") return { type: "NonError", message: error };
-  return { type: "NonError", message: "Non-Error value" };
+  return { type: typeof error === "string" ? "NonErrorString" : "NonError" };
 }
 
 function formatPretty(record: Readonly<Record<string, unknown>>): string {
