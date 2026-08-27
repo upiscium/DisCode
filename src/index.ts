@@ -6,6 +6,7 @@ import { ToolSummaryPublisher } from "./bridge/tool-summary-publisher.js";
 import { loadConfig } from "./config.js";
 import { DirectoryPolicy } from "./domain/directory-policy.js";
 import type { OpenCodeHostConfig } from "./domain/host-registry.js";
+import { Logger } from "./logging/logger.js";
 import { OpenCodeSseMonitor } from "./opencode/diagnostics.js";
 import {
   type OpenCodeHostRuntime,
@@ -22,6 +23,16 @@ if (existsSync(".env")) {
 }
 
 const config = loadConfig();
+const logger = new Logger({
+  level: config.logLevel,
+  format: config.logFormat,
+  secrets: [
+    config.discordToken,
+    ...config.hostRegistry
+      .list()
+      .flatMap((host) => (host.password ? [host.password] : [])),
+  ],
+});
 const defaultHostId = config.hostRegistry.defaultHost().id;
 const state = new StateStore(config.stateFile, defaultHostId);
 await state.load();
@@ -39,18 +50,22 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
     hostId: host.id,
     discordToken: config.discordToken,
     state,
+    logger,
   });
   const toolSummaryPublisher = new ToolSummaryPublisher({
     enabled: config.showToolSummaries,
     hostId: host.id,
     discordToken: config.discordToken,
     state,
+    logger,
   });
   const gateway = new ObservedOpenCodeGateway({
+    hostId: host.id,
     baseUrl: host.baseUrl,
     username: host.username,
     ...(host.password ? { password: host.password } : {}),
     observers: [toolSummaryPublisher, streamingPublisher],
+    logger,
   });
 
   return {
@@ -63,7 +78,7 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
 });
 
 const hosts = new OpenCodeHostRuntimeRegistry(defaultHostId, hostRuntimes);
-const bridge = new Bridge({ config, state, hosts });
+const bridge = new Bridge({ config, state, hosts, logger });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
@@ -72,7 +87,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 process.on("unhandledRejection", (error) => {
-  console.error("Unhandled promise rejection", error);
+  logger.error("process.unhandled_rejection", "Unhandled promise rejection", {}, error);
 });
 
 await bridge.start();

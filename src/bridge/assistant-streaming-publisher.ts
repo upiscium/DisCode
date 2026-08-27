@@ -4,6 +4,7 @@ import {
   deliverCanonicalAssistantResult,
   renderAssistantStreamingPreview,
 } from "../discord/streaming.js";
+import { type LoggerLike, noopLogger } from "../logging/logger.js";
 import type { OpenCodeEvent, OpenCodeGateway } from "../opencode/gateway.js";
 import type { StateStore } from "../state/state-store.js";
 import { AssistantTextStreamBuffer, CoalescedSessionFlusher } from "./assistant-stream.js";
@@ -25,6 +26,7 @@ export class AssistantStreamingPublisher {
   readonly #hostId: string;
   readonly #state: StreamingStateStore;
   readonly #rest: DiscordMessageTransport;
+  readonly #logger: LoggerLike;
   readonly #buffer = new AssistantTextStreamBuffer();
   readonly #flusher: CoalescedSessionFlusher;
   readonly #previews = new Map<string, PreviewState>();
@@ -36,15 +38,22 @@ export class AssistantStreamingPublisher {
     state: StreamingStateStore;
     flushIntervalMs?: number;
     transport?: DiscordMessageTransport;
+    logger?: LoggerLike;
   }) {
     this.#enabled = options.enabled;
     this.#hostId = options.hostId;
     this.#state = options.state;
     this.#rest = options.transport ?? new REST({ version: "10" }).setToken(options.discordToken);
+    this.#logger = options.logger ?? noopLogger;
     this.#flusher = new CoalescedSessionFlusher(
       options.flushIntervalMs ?? 1000,
       (sessionId, error) => {
-        console.error(`Discord streaming preview failed for ${this.#hostId}/${sessionId}`, error);
+        this.#logger.error(
+          "discord.streaming_preview_failed",
+          "Discord streaming preview failed",
+          { host_id: this.#hostId, session_id: sessionId },
+          error,
+        );
       },
     );
   }
@@ -161,8 +170,10 @@ export class AssistantStreamingPublisher {
             body: { content },
           }),
         onPreviewEditError: (error) => {
-          console.error(
-            `Failed to promote streaming preview for ${this.#hostId}/${sessionId}`,
+          this.#logger.error(
+            "discord.streaming_promote_failed",
+            "Failed to promote streaming preview",
+            { host_id: this.#hostId, session_id: sessionId, thread_id: binding.threadId },
             error,
           );
         },

@@ -1,5 +1,6 @@
 import { REST, Routes } from "discord.js";
 import { renderToolActivitySummary, safeToolAnnotation } from "../discord/tool-summary.js";
+import { type LoggerLike, noopLogger } from "../logging/logger.js";
 import type { OpenCodeEvent, OpenCodeGateway } from "../opencode/gateway.js";
 import type { StateStore } from "../state/state-store.js";
 import { CoalescedSessionFlusher } from "./assistant-stream.js";
@@ -23,6 +24,7 @@ export class ToolSummaryPublisher {
   readonly #hostId: string;
   readonly #state: ToolSummaryStateStore;
   readonly #rest: ToolSummaryTransport;
+  readonly #logger: LoggerLike;
   readonly #buffer = new ToolActivityBuffer();
   readonly #flusher: CoalescedSessionFlusher;
   readonly #messages = new Map<string, SummaryMessageState>();
@@ -34,15 +36,22 @@ export class ToolSummaryPublisher {
     state: ToolSummaryStateStore;
     flushIntervalMs?: number;
     transport?: ToolSummaryTransport;
+    logger?: LoggerLike;
   }) {
     this.#enabled = options.enabled;
     this.#hostId = options.hostId;
     this.#state = options.state;
     this.#rest = options.transport ?? new REST({ version: "10" }).setToken(options.discordToken);
+    this.#logger = options.logger ?? noopLogger;
     this.#flusher = new CoalescedSessionFlusher(
       options.flushIntervalMs ?? 1000,
       (sessionId, error) => {
-        console.error(`Discord tool summary failed for ${this.#hostId}/${sessionId}`, error);
+        this.#logger.error(
+          "discord.tool_summary_failed",
+          "Discord tool summary failed",
+          { host_id: this.#hostId, session_id: sessionId },
+          error,
+        );
       },
     );
   }

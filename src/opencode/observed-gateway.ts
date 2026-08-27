@@ -1,3 +1,4 @@
+import { type LoggerLike, noopLogger } from "../logging/logger.js";
 import { type BridgeGlobalEvent, type OpenCodeEvent, OpenCodeGateway } from "./gateway.js";
 
 export type OpenCodeEventObserver = {
@@ -10,15 +11,27 @@ export type OpenCodeEventObserver = {
 
 export class ObservedOpenCodeGateway extends OpenCodeGateway {
   readonly #observers: readonly OpenCodeEventObserver[];
+  readonly #logger: LoggerLike;
+  readonly #hostId: string | undefined;
 
   constructor(options: {
+    hostId?: string;
     baseUrl: string;
     username: string;
     password?: string;
     observers: readonly OpenCodeEventObserver[];
+    logger?: LoggerLike;
   }) {
-    super(options);
+    super({
+      baseUrl: options.baseUrl,
+      username: options.username,
+      ...(options.password ? { password: options.password } : {}),
+      ...(options.hostId ? { hostId: options.hostId } : {}),
+      ...(options.logger ? { logger: options.logger } : {}),
+    });
     this.#observers = options.observers;
+    this.#logger = options.logger ?? noopLogger;
+    this.#hostId = options.hostId;
   }
 
   override async *events(signal?: AbortSignal): AsyncGenerator<BridgeGlobalEvent> {
@@ -28,7 +41,15 @@ export class ObservedOpenCodeGateway extends OpenCodeGateway {
           try {
             await observer.handleEvent(event.payload, this);
           } catch (error) {
-            console.error(`OpenCode event observer failed for ${event.payload.type}`, error);
+            this.#logger.error(
+              "opencode.observer_failed",
+              "OpenCode event observer failed",
+              {
+                ...(this.#hostId ? { host_id: this.#hostId } : {}),
+                opencode_event: event.payload.type,
+              },
+              error,
+            );
           }
         }
         yield event;
@@ -38,7 +59,12 @@ export class ObservedOpenCodeGateway extends OpenCodeGateway {
         try {
           observer.stop();
         } catch (error) {
-          console.error("OpenCode event observer shutdown failed", error);
+          this.#logger.error(
+            "opencode.observer_shutdown_failed",
+            "OpenCode event observer shutdown failed",
+            this.#hostId ? { host_id: this.#hostId } : {},
+            error,
+          );
         }
       }
     }
