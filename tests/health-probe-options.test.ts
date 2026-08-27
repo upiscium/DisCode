@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type LoggerLike, noopLogger } from "../src/logging/logger.js";
-import {
-  probeOpenCodeHostsHealth,
-  setOpenCodeHealthLogger,
-} from "../src/opencode/diagnostics.js";
+import { probeOpenCodeHostsHealth, setOpenCodeHealthLogger } from "../src/opencode/diagnostics.js";
 
 afterEach(() => {
   setOpenCodeHealthLogger(noopLogger);
