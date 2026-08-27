@@ -25,6 +25,14 @@ export class PermissionPublicationTracker {
     this.#entries.delete(permissionKey(hostId, permissionId));
   }
 
+  clearSession(hostId: string, sessionId: string): void {
+    for (const [key, entry] of this.#entries) {
+      if (key.startsWith(`${hostId}:`) && entry.request.sessionID === sessionId) {
+        this.#entries.delete(key);
+      }
+    }
+  }
+
   async publish(
     hostId: string,
     request: OpenCodePermissionRequest,
