@@ -45,7 +45,7 @@ export function loadSecretEnvironment(options: SecretEnvironmentOptions = {}): s
 
   validateSecretEnvironmentSyntax(content, path);
 
-  let parsed: Record<string, string>;
+  let parsed: NodeJS.Dict<string>;
   try {
     parsed = parseEnv(content);
   } catch {
@@ -53,6 +53,7 @@ export function loadSecretEnvironment(options: SecretEnvironmentOptions = {}): s
   }
 
   for (const [key, value] of Object.entries(parsed)) {
+    if (value === undefined) continue;
     if (env[key] === undefined || env[key]?.trim() === "") {
       env[key] = value;
     }
