@@ -122,17 +122,27 @@ The NixOS module gives systemd ownership of Bridge process lifecycle:
 - a Bridge restart therefore preserves bindings without coupling OpenCode session lifetime to the Bridge process;
 - stopping the Bridge does not stop, abort, migrate, or delete OpenCode server sessions.
 
-Runtime configuration can be supplied through a systemd `EnvironmentFile` outside the Nix store. The module rejects a store-backed `environmentFile` path so tokens and OpenCode passwords are not accidentally materialized into a world-readable store object. Direct `LoadCredential=` application support is a later Phase 4 boundary; the current service layer intentionally preserves the existing environment-variable config contract.
+Runtime non-secret configuration can still be supplied through `Environment=` or a systemd `EnvironmentFile`. Secrets can instead be separated into an optional dotenv-style file selected with `OCB_SECRETS_FILE` or the NixOS module's `secretsFile` option. The Bridge expands `~`/`~/...` against the runtime user's home, accepts ordinary absolute or relative filesystem paths, and loads the file before repository-local `.env`.
+
+Configuration precedence is intentionally fixed as:
+
+```text
+process/systemd environment
+  > OCB_SECRETS_FILE
+  > repository .env
+```
+
+The NixOS module only places the secret-file path in the service environment; Nix never reads or serializes the file content. A configured Nix-store-backed `secretsFile` is rejected. The service user must have filesystem permission to read the selected file. Missing, unreadable, or malformed configured secret files fail startup without including secret contents in the error.
 
 ## Threat model assumptions
 
 - The Bridge process and configured host registry are trusted operator infrastructure.
 - Discord is an untrusted transport surface; user IDs, guild ID, stable host IDs, and per-host directory roots are explicit allowlists.
 - Remote OpenCode servers are reachable only over a deliberately secured network/transport appropriate to the deployment. Host credentials remain required.
-- A compromised Discord account in `DISCORD_ALLOWED_USER_IDS` can issue prompts and approve one-shot permissions exposed by OpenCode for any host ID made available by the operator. Therefore the Discord account, bot token, and host registry are security-critical.
+- A compromised Discord account in `DISCORD_ALLOWED_USER_IDS` can issue prompts and approve one-shot permissions exposed by OpenCode for any host ID made available by the operator. Therefore the Discord account, bot token, host registry, and selected secret-file path are security-critical.
 - `Allow always` is disabled unless the operator explicitly opts in.
 - The bridge does not copy arbitrary tool output or environment variables into permission messages or host metadata.
-- The bridge does not accept arbitrary OpenCode URLs from Discord and does not execute shell/tmux/PID-control operations itself.
+- The bridge does not accept arbitrary OpenCode URLs or secret-file paths from Discord and does not execute shell/tmux/PID-control operations itself.
 
 ## Persistence model
 
