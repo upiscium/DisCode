@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { noopLogger } from "../src/logging/logger.js";
 import { PrometheusMetrics } from "../src/metrics/prometheus.js";
 import type {
-  OpenCodeHostHealthProbeOptions,
+  OpenCodeHealthProbeOptions,
   OpenCodeHostHealthTarget,
   OpenCodeHttpHealth,
 } from "../src/opencode/diagnostics.js";
@@ -48,7 +48,7 @@ function fixture() {
   const probeHosts = vi.fn(
     async (
       targets: readonly OpenCodeHostHealthTarget[],
-      _probe?: (options: OpenCodeHostHealthProbeOptions) => Promise<OpenCodeHttpHealth>,
+      _probe?: (options: OpenCodeHealthProbeOptions) => Promise<OpenCodeHttpHealth>,
       options?: ProbeOptions,
     ) => {
       for (const target of targets) {
