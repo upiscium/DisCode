@@ -1,22 +1,89 @@
 {
-  description = "OpenCode Discord Bridge development shell";
+  description = "OpenCode Discord Bridge";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-    in {
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages = with pkgs; [
-            nodejs_22
-            git
-            just
-            tmux
-          ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems f;
+      packageFor = system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        pkgs.callPackage ./nix/package.nix { };
+    in
+    {
+      packages = forAllSystems (system: {
+        default = packageFor system;
+        opencode-discord-bridge = packageFor system;
+      });
+
+      apps = forAllSystems (system: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/opencode-discord-bridge";
         };
       });
+
+      devShells = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              nodejs_22
+              git
+              just
+              tmux
+            ];
+          };
+        });
+
+      nixosModules.default = import ./nix/module.nix { inherit self; };
+      nixosModules.opencode-discord-bridge = self.nixosModules.default;
+
+      checks = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          package = self.packages.${system}.default;
+          testSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  environmentFile = "/run/secrets/opencode-discord-bridge.env";
+                  stateDirectory = "opencode-discord-bridge-test";
+                  stateFile = "bindings.json";
+                };
+              }
+            ];
+          };
+          service = testSystem.config.systemd.services.opencode-discord-bridge;
+          moduleEvalCheck =
+            assert service.serviceConfig.Restart == "on-failure";
+            assert service.serviceConfig.StateDirectory == "opencode-discord-bridge-test";
+            assert service.serviceConfig.EnvironmentFile == "/run/secrets/opencode-discord-bridge.env";
+            assert builtins.elem "network-online.target" service.after;
+            assert nixpkgs.lib.hasInfix "STATE_FILE=/var/lib/opencode-discord-bridge-test/bindings.json" service.serviceConfig.ExecStart;
+            pkgs.runCommand "opencode-discord-bridge-module-eval" { } ''
+              touch "$out"
+            '';
+        in
+        {
+          package = package;
+          module-eval = moduleEvalCheck;
+          entrypoint = pkgs.runCommand "opencode-discord-bridge-entrypoint" { } ''
+            test -x ${package}/bin/opencode-discord-bridge
+            test -f ${package}/lib/opencode-discord-bridge/dist/index.js
+            test -d ${package}/lib/opencode-discord-bridge/node_modules
+            touch "$out"
+          '';
+        });
     };
 }
