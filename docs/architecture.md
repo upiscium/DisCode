@@ -152,9 +152,9 @@ Typical JSON record:
 }
 ```
 
-The stable context policy intentionally favors identifiers over payloads. `host_id`, OpenCode `session_id`, Discord `thread_id`, coarse interaction kind, OpenCode event type, retry timing, and normalized error type/message may be logged when useful. Directory paths, Discord user/guild IDs, prompt/message text, Ask answers, attachment content, raw tool output, raw config objects, and raw Error objects/stacks are not part of the normal logging contract.
+The stable context policy intentionally favors identifiers over payloads. `host_id`, OpenCode `session_id`, Discord `thread_id`, coarse interaction kind, OpenCode event type, retry timing, normalized `error_type`, and scalar `error_code` may be logged when useful. Arbitrary `Error.message` and stack traces are not emitted. Directory paths, Discord user/guild IDs, prompt/message text, Ask answers, attachment content, raw tool output, raw config objects, and raw Error objects are not part of the normal logging contract.
 
-Fields whose names indicate token/password/authorization/secret/credential data are always redacted. In addition, the production logger receives the resolved Discord token and OpenCode host passwords as known secret sentinels and removes those values if they become embedded in a message or normalized error string. This is defense in depth; callers must still avoid sending sensitive payloads to the logger at all.
+Fields whose names indicate token/password/authorization/secret/credential data are always redacted. Directory/user/guild and content-like fields are forcibly omitted even if a caller supplies them. In addition, the production logger receives the resolved Discord token, OpenCode host passwords, and derived Basic-auth credential encodings as known secret sentinels and removes those values if they become embedded in logger-authored messages or allowed scalar context. This is defense in depth; callers must still avoid sending sensitive payloads to the logger at all.
 
 `OCB_LOG_LEVEL` controls `debug|info|warn|error`. `OCB_LOG_FORMAT` controls `json|pretty`. Manual execution defaults to `info/pretty`; the NixOS service defaults to `info/json` for journald ingestion.
 
