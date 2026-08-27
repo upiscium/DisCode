@@ -32,12 +32,15 @@ jobs:
 
           old = '''    const stillPending = current.some(
               (request) => request.id === parsed.permissionId && request.sessionID === parsed.sessionId,
-            );'''
+            );'''.replace('      (request)', '      (request)').replace('    );', '    );')
+          old = '''    const stillPending = current.some(
+      (request) => request.id === parsed.permissionId && request.sessionID === parsed.sessionId,
+    );'''
           new = '''    const stillPending = hasPendingPermissionRequest(
-              current,
-              parsed.sessionId,
-              parsed.permissionId,
-            );'''
+      current,
+      parsed.sessionId,
+      parsed.permissionId,
+    );'''
           if text.count(old) != 1:
               raise SystemExit("stale permission predicate not found exactly once")
           text = text.replace(old, new, 1)
