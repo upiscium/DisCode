@@ -7,6 +7,9 @@ let
   serviceEnvironment = cfg.environment // {
     OCB_LOG_LEVEL = cfg.logLevel;
     OCB_LOG_FORMAT = cfg.logFormat;
+    OCB_METRICS_ENABLED = if cfg.metrics.enable then "true" else "false";
+    OCB_METRICS_HOST = cfg.metrics.address;
+    OCB_METRICS_PORT = builtins.toString cfg.metrics.port;
   } // lib.optionalAttrs (cfg.secretsFile != null) {
     OCB_SECRETS_FILE = cfg.secretsFile;
   };
@@ -86,6 +89,30 @@ in
       type = lib.types.enum [ "json" "pretty" ];
       default = "json";
       description = "Bridge log format. JSON is the default for systemd/journald operation.";
+    };
+
+    metrics = lib.mkOption {
+      default = { };
+      description = "Optional Prometheus metrics scrape endpoint.";
+      type = lib.types.submodule {
+        options = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Whether to expose the Bridge metrics HTTP endpoint.";
+          };
+          address = lib.mkOption {
+            type = lib.types.str;
+            default = "127.0.0.1";
+            description = "Address used by the metrics listener. Loopback is the safe default.";
+          };
+          port = lib.mkOption {
+            type = lib.types.port;
+            default = 9464;
+            description = "TCP port used by the metrics listener. The module does not open the firewall.";
+          };
+        };
+      };
     };
 
     stateDirectory = lib.mkOption {
