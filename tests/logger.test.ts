@@ -31,7 +31,7 @@ describe("Logger", () => {
     });
   });
 
-  it("redacts known secret values and sensitive fields without serializing raw objects or stacks", () => {
+  it("redacts secrets and omits private/content fields without retaining arbitrary error messages", () => {
     const lines: string[] = [];
     const logger = new Logger({
       level: "debug",
@@ -41,6 +41,10 @@ describe("Logger", () => {
       now: fixedNow,
     });
 
+    const error = Object.assign(
+      new Error("PASSWORD_SENTINEL prompt=do not retain this error payload"),
+      { code: "E_SAFE_CODE" },
+    );
     logger.error(
       "discord.interaction_failed",
       "request failed with TOKEN_SENTINEL",
@@ -49,9 +53,12 @@ describe("Logger", () => {
         authorization: "Bearer TOKEN_SENTINEL",
         password_hint: "PASSWORD_SENTINEL",
         prompt: "do not retain this prompt",
+        directory: "/private/repository/path",
+        user_id: "discord-user-id",
+        guild_id: "discord-guild-id",
         raw_config: { DISCORD_TOKEN: "TOKEN_SENTINEL" },
       },
-      new Error("PASSWORD_SENTINEL exploded"),
+      error,
     );
 
     const line = lines[0] ?? "";
@@ -59,14 +66,22 @@ describe("Logger", () => {
     expect(line).not.toContain("TOKEN_SENTINEL");
     expect(line).not.toContain("PASSWORD_SENTINEL");
     expect(line).not.toContain("do not retain this prompt");
+    expect(line).not.toContain("do not retain this error payload");
+    expect(line).not.toContain("/private/repository/path");
+    expect(line).not.toContain("discord-user-id");
+    expect(line).not.toContain("discord-guild-id");
     expect(line).not.toContain("DISCORD_TOKEN");
     expect(line).not.toContain("stack");
     expect(record.authorization).toBe("[REDACTED]");
     expect(record.password_hint).toBe("[REDACTED]");
     expect(record.prompt).toBe("[OMITTED]");
+    expect(record.directory).toBe("[OMITTED]");
+    expect(record.user_id).toBe("[OMITTED]");
+    expect(record.guild_id).toBe("[OMITTED]");
     expect(record.raw_config).toBe("[OMITTED]");
     expect(record.error_type).toBe("Error");
-    expect(record.error_message).toBe("[REDACTED] exploded");
+    expect(record.error_code).toBe("E_SAFE_CODE");
+    expect(record.error_message).toBeUndefined();
   });
 
   it("filters records below the configured level", () => {
