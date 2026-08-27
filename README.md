@@ -44,6 +44,7 @@ Discord is not a remote shell in this design.
 7. State contains only thread/session/host metadata. Discord and OpenCode credentials are never persisted in the state file.
 8. Host-registry passwords are referenced with `passwordEnv`; password values are not embedded in `OPENCODE_HOSTS_JSON` or exposed through registry serialization.
 9. A configured secret-file path is operator-controlled configuration. Discord cannot select or change it.
+10. Structured logs use stable identifiers rather than message payloads. Prompt text, Ask answers, tool output, attachment content, directory paths, and Discord user/guild IDs are not part of the normal log context, while credential-like fields and known secret values are redacted.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
@@ -159,6 +160,36 @@ process/systemd environment
 
 A configured secret file that is missing, unreadable, or malformed makes startup fail closed. Error messages contain the file path/line where useful, but not the secret values.
 
+### Logging
+
+Runtime logging supports two formats and four severity thresholds:
+
+```dotenv
+OCB_LOG_LEVEL=info
+OCB_LOG_FORMAT=pretty
+```
+
+`OCB_LOG_LEVEL` accepts `debug`, `info`, `warn`, or `error`. `OCB_LOG_FORMAT` accepts `json` or `pretty`. Manual execution defaults to `info/pretty`; the NixOS module defaults to `info/json` for journald-friendly service operation. Invalid values fail closed during configuration loading.
+
+JSON mode emits exactly one record per line. Example:
+
+```json
+{"timestamp":"2026-08-27T12:34:56.789Z","level":"info","event":"session.created","message":"OpenCode session created","host_id":"host-1","session_id":"ses_...","thread_id":"1234567890"}
+```
+
+Stable lifecycle/failure event names include `bridge.starting`, `bridge.started`, `bridge.stopping`, `bridge.stopped`, `discord.connected`, `discord.interaction_failed`, `discord.message_failed`, `opencode.consumer_failed`, `opencode.observer_failed`, `opencode.stream_disconnected`, `session.created`, `session.closed`, `session.unbound`, and `session.rollback_failed`.
+
+Log context is intentionally narrow. Host/session/thread IDs and coarse event/failure metadata are allowed; prompt/message text, Ask answers, raw tool output, attachment content, directory paths, Discord user/guild IDs, raw config objects, and raw Error stacks are not part of the normal logging contract. Credential-like fields are forcibly redacted, and the resolved Discord/OpenCode secrets are also used as value sentinels so accidental string inclusion is replaced with `[REDACTED]`.
+
+When systemd is using JSON mode, individual events can be filtered from the raw message stream, for example:
+
+```bash
+journalctl -u opencode-discord-bridge -o cat \
+  | jq 'select(.event == "session.created")'
+```
+
+Phase 4C does not expose a Prometheus/OpenMetrics/OpenTelemetry listener. Metrics/export is a later phase after the structured event/context contract is validated.
+
 ### 3. Start a local OpenCode server with the helper (optional)
 
 For the Bridge machine's local OpenCode server:
@@ -228,6 +259,8 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
             createUser = false;
             secretsFile = "~/secrets/ocb_secrets.env";
             environmentFile = "/run/opencode-discord-bridge.env";
+            logLevel = "info";
+            logFormat = "json";
             stateDirectory = "opencode-discord-bridge";
           };
         }
@@ -240,6 +273,8 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
 `secretsFile` is only a path string. Nix never reads the selected file and the module rejects paths that already point into the Nix store. `~/...` is expanded at runtime using the configured service user's home; with the default dedicated system user, use a path readable by that user (typically an absolute path). The service user must have filesystem permission to read the file.
 
 `environmentFile` and `environment` remain available for non-secret or legacy configuration. `STATE_FILE` is controlled by the module and placed under `/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed `environmentFile` paths as well.
+
+The NixOS module defaults to `logLevel = "info"` and `logFormat = "json"`. These are passed as ordinary non-secret environment settings and can be overridden explicitly.
 
 By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session.
 
