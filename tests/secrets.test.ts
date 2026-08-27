@@ -47,10 +47,9 @@ describe("secret environment loader", () => {
       home: "/home/tester",
       readFile: (path) => {
         expect(path).toBe("/home/tester/secrets/ocb_secrets.env");
-        return [
-          "DISCORD_TOKEN=secret-file-token",
-          "OPENCODE_HOST_1_PASSWORD=host-secret",
-        ].join("\n");
+        return ["DISCORD_TOKEN=secret-file-token", "OPENCODE_HOST_1_PASSWORD=host-secret"].join(
+          "\n",
+        );
       },
     });
 
