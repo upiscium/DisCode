@@ -13,8 +13,10 @@ import {
 } from "./opencode/host-runtime-registry.js";
 import { ObservedOpenCodeGateway } from "./opencode/observed-gateway.js";
 import { createOpenCodeDirectoryResolver } from "./opencode/remote-directory-resolver.js";
+import { loadSecretEnvironment } from "./secrets.js";
 import { StateStore } from "./state/state-store.js";
 
+loadSecretEnvironment();
 if (existsSync(".env")) {
   loadEnvFile(".env");
 }

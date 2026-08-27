@@ -4,6 +4,9 @@
 let
   cfg = config.services.opencode-discord-bridge;
   statePath = "/var/lib/${cfg.stateDirectory}/${cfg.stateFile}";
+  serviceEnvironment = cfg.environment // lib.optionalAttrs (cfg.secretsFile != null) {
+    OCB_SECRETS_FILE = cfg.secretsFile;
+  };
 in
 {
   options.services.opencode-discord-bridge = {
@@ -37,11 +40,22 @@ in
     environmentFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      example = "/run/secrets/opencode-discord-bridge.env";
+      example = "/run/opencode-discord-bridge.env";
       description = ''
-        Runtime systemd EnvironmentFile containing Bridge configuration and secrets.
-        Use a path outside the Nix store. STATE_FILE is controlled by this module and
-        does not need to be present in the environment file.
+        Runtime systemd EnvironmentFile containing Bridge configuration. Keep secrets in
+        secretsFile when possible. STATE_FILE is controlled by this module and does not
+        need to be present in the environment file.
+      '';
+    };
+
+    secretsFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "~/secrets/ocb_secrets.env";
+      description = ''
+        Optional dotenv-style file containing Bridge secrets. The path is passed to the
+        runtime as OCB_SECRETS_FILE; the file content is never read by Nix. '~/' is
+        expanded by the Bridge using the service user's home directory at runtime.
       '';
     };
 
@@ -80,6 +94,12 @@ in
           || !lib.hasPrefix builtins.storeDir cfg.environmentFile;
         message = "services.opencode-discord-bridge.environmentFile must point outside the Nix store";
       }
+      {
+        assertion =
+          cfg.secretsFile == null
+          || !lib.hasPrefix builtins.storeDir cfg.secretsFile;
+        message = "services.opencode-discord-bridge.secretsFile must point outside the Nix store";
+      }
     ];
 
     users.groups = lib.mkIf cfg.createUser {
@@ -99,7 +119,7 @@ in
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
 
-      environment = cfg.environment;
+      environment = serviceEnvironment;
 
       serviceConfig = {
         Type = "simple";
