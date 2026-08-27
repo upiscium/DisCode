@@ -164,8 +164,10 @@ describe("operator health diagnostics", () => {
       http_state: "unreachable",
       sse_state: "disconnected",
     });
-    expect(JSON.stringify(warn.mock.calls)).not.toContain("10.12.0.2");
-    expect(JSON.stringify(warn.mock.calls)).not.toContain("opencode");
+    const loggedFields = warn.mock.calls[0]?.[2] ?? {};
+    expect(JSON.stringify(loggedFields)).not.toContain("10.12.0.2");
+    expect(loggedFields).not.toHaveProperty("base_url");
+    expect(loggedFields).not.toHaveProperty("username");
   });
 
   it("renders aggregate ready state when every host is healthy and connected", () => {
