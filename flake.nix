@@ -59,6 +59,8 @@
                   package = package;
                   environmentFile = "/run/opencode-discord-bridge.env";
                   secretsFile = "~/secrets/ocb_secrets.env";
+                  logLevel = "warn";
+                  logFormat = "json";
                   stateDirectory = "opencode-discord-bridge-test";
                   stateFile = "bindings.json";
                 };
@@ -71,6 +73,8 @@
             assert service.serviceConfig.StateDirectory == "opencode-discord-bridge-test";
             assert service.serviceConfig.EnvironmentFile == "/run/opencode-discord-bridge.env";
             assert service.environment.OCB_SECRETS_FILE == "~/secrets/ocb_secrets.env";
+            assert service.environment.OCB_LOG_LEVEL == "warn";
+            assert service.environment.OCB_LOG_FORMAT == "json";
             assert builtins.elem "network-online.target" service.after;
             assert nixpkgs.lib.hasInfix "STATE_FILE=/var/lib/opencode-discord-bridge-test/bindings.json" service.serviceConfig.ExecStart;
             assert !nixpkgs.lib.hasInfix "DISCORD_TOKEN" service.serviceConfig.ExecStart;

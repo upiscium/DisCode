@@ -4,7 +4,10 @@
 let
   cfg = config.services.opencode-discord-bridge;
   statePath = "/var/lib/${cfg.stateDirectory}/${cfg.stateFile}";
-  serviceEnvironment = cfg.environment // lib.optionalAttrs (cfg.secretsFile != null) {
+  serviceEnvironment = cfg.environment // {
+    OCB_LOG_LEVEL = cfg.logLevel;
+    OCB_LOG_FORMAT = cfg.logFormat;
+  } // lib.optionalAttrs (cfg.secretsFile != null) {
     OCB_SECRETS_FILE = cfg.secretsFile;
   };
 in
@@ -71,6 +74,18 @@ in
         declared here are part of the Nix configuration and must not contain tokens,
         passwords, or other secrets.
       '';
+    };
+
+    logLevel = lib.mkOption {
+      type = lib.types.enum [ "debug" "info" "warn" "error" ];
+      default = "info";
+      description = "Minimum structured log level emitted by the Bridge.";
+    };
+
+    logFormat = lib.mkOption {
+      type = lib.types.enum [ "json" "pretty" ];
+      default = "json";
+      description = "Bridge log format. JSON is the default for systemd/journald operation.";
     };
 
     stateDirectory = lib.mkOption {

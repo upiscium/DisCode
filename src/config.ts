@@ -1,5 +1,11 @@
 import { resolve } from "node:path";
 import { HostRegistry, type OpenCodeHostConfig } from "./domain/host-registry.js";
+import {
+  type LogFormat,
+  type LogLevel,
+  parseLogFormat,
+  parseLogLevel,
+} from "./logging/logger.js";
 
 export type AppConfig = {
   discordToken: string;
@@ -10,6 +16,8 @@ export type AppConfig = {
   allowPermissionAlways: boolean;
   streamAssistantText: boolean;
   showToolSummaries: boolean;
+  logLevel: LogLevel;
+  logFormat: LogFormat;
   hostRegistry: HostRegistry;
   opencodeBaseUrl: string;
   opencodeUsername: string;
@@ -174,6 +182,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowPermissionAlways: boolean(env.DISCORD_ALLOW_PERMISSION_ALWAYS, false),
     streamAssistantText: boolean(env.DISCORD_STREAM_ASSISTANT_TEXT, false),
     showToolSummaries: boolean(env.DISCORD_SHOW_TOOL_SUMMARIES, false),
+    logLevel: parseLogLevel(env.OCB_LOG_LEVEL, "info"),
+    logFormat: parseLogFormat(env.OCB_LOG_FORMAT, "pretty"),
     hostRegistry,
     opencodeBaseUrl: defaultHost.baseUrl,
     opencodeUsername: defaultHost.username,
