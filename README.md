@@ -43,6 +43,7 @@ Discord is not a remote shell in this design.
 6. A local OpenCode server should stay on `127.0.0.1`. Remote OpenCode hosts should be reachable only over a deliberately secured network/transport and should still use server authentication.
 7. State contains only thread/session/host metadata. Discord and OpenCode credentials are never persisted in the state file.
 8. Host-registry passwords are referenced with `passwordEnv`; password values are not embedded in `OPENCODE_HOSTS_JSON` or exposed through registry serialization.
+9. A configured secret-file path is operator-controlled configuration. Discord cannot select or change it.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
@@ -98,7 +99,7 @@ OpenCode itself is intentionally not pinned or bundled by the Bridge package; ea
 
 Create a dedicated bot application in the Discord Developer Portal. Enable **Message Content Intent** and install the bot into the target guild with application commands plus the channel/thread permissions described above.
 
-Copy `.env.example` to `.env` and fill the Discord IDs/token. Keep `.env` out of git.
+Copy `.env.example` to `.env` for ordinary configuration. Secrets may stay in `.env` for backward compatibility, but a separate `OCB_SECRETS_FILE` is preferred for service operation. Keep both `.env` and the secret file out of git.
 
 ### 2. Configure the OpenCode boundary
 
@@ -130,6 +131,34 @@ Every configured host receives an independent gateway and SSE consumer. A persis
 
 Set `DISCORD_STREAM_ASSISTANT_TEXT=true` only when buffered progress previews are desired. The default `false` keeps final-only behavior.
 
+### Secret file
+
+Set `OCB_SECRETS_FILE` in the real process/systemd environment to load a separate dotenv-style secret file. It may live at any normal filesystem path, including a path under the runtime user's home:
+
+```bash
+export OCB_SECRETS_FILE=~/secrets/ocb_secrets.env
+```
+
+Example `~/secrets/ocb_secrets.env`:
+
+```dotenv
+DISCORD_TOKEN=<discord-bot-token>
+OPENCODE_HOST_LOCAL_PASSWORD=<local-password>
+OPENCODE_HOST_LAB_PASSWORD=<lab-password>
+```
+
+Legacy single-host operation can place `OPENCODE_SERVER_PASSWORD` there instead. `~/...` is expanded against the user running the Bridge; absolute paths such as `/run/secrets/opencode-discord-bridge.env` and relative paths are also supported. The selected file must be readable by that runtime user.
+
+Startup precedence is fixed as:
+
+```text
+process/systemd environment
+  > OCB_SECRETS_FILE
+  > repository-local .env
+```
+
+A configured secret file that is missing, unreadable, or malformed makes startup fail closed. Error messages contain the file path/line where useful, but not the secret values.
+
 ### 3. Start a local OpenCode server with the helper (optional)
 
 For the Bridge machine's local OpenCode server:
@@ -160,7 +189,7 @@ npm run build
 npm start
 ```
 
-`src/index.ts` automatically loads `.env` when present.
+`src/index.ts` loads the optional `OCB_SECRETS_FILE` first and then repository-local `.env`. Existing process environment values retain highest precedence.
 
 ### 5. Create Discord/OpenCode sessions
 
@@ -180,7 +209,7 @@ The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, 
 
 ## NixOS service operation
 
-The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service:
+The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, to keep secrets in `~/secrets/ocb_secrets.env` owned by an existing user:
 
 ```nix
 {
@@ -194,7 +223,11 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
         {
           services.opencode-discord-bridge = {
             enable = true;
-            environmentFile = "/run/secrets/opencode-discord-bridge.env";
+            user = "upiscium";
+            group = "users";
+            createUser = false;
+            secretsFile = "~/secrets/ocb_secrets.env";
+            environmentFile = "/run/opencode-discord-bridge.env";
             stateDirectory = "opencode-discord-bridge";
           };
         }
@@ -204,11 +237,13 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
 }
 ```
 
-The environment file uses the same variables documented in `.env.example`, except `STATE_FILE`: the module owns that value and places state under `/var/lib/<stateDirectory>/<stateFile>`. Keep the environment file outside the Nix store; the module rejects store paths for `environmentFile`. `services.opencode-discord-bridge.environment` is available only for non-secret values because Nix-declared strings become part of the system configuration/store.
+`secretsFile` is only a path string. Nix never reads the selected file and the module rejects paths that already point into the Nix store. `~/...` is expanded at runtime using the configured service user's home; with the default dedicated system user, use a path readable by that user (typically an absolute path). The service user must have filesystem permission to read the file.
+
+`environmentFile` and `environment` remain available for non-secret or legacy configuration. `STATE_FILE` is controlled by the module and placed under `/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed `environmentFile` paths as well.
 
 By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session.
 
-Direct systemd `LoadCredential=` integration is intentionally deferred to the next Phase 4 change; this module preserves the existing environment-variable application contract without placing credential values in the Nix store.
+A future systemd `LoadCredential=` layer may copy/isolate the selected secret source further; the application-level variable contract does not depend on a specific secret backend.
 
 ## Opening the same session in TUI
 

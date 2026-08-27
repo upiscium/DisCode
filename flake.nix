@@ -57,7 +57,8 @@
                 services.opencode-discord-bridge = {
                   enable = true;
                   package = package;
-                  environmentFile = "/run/secrets/opencode-discord-bridge.env";
+                  environmentFile = "/run/opencode-discord-bridge.env";
+                  secretsFile = "~/secrets/ocb_secrets.env";
                   stateDirectory = "opencode-discord-bridge-test";
                   stateFile = "bindings.json";
                 };
@@ -68,9 +69,11 @@
           moduleEvalCheck =
             assert service.serviceConfig.Restart == "on-failure";
             assert service.serviceConfig.StateDirectory == "opencode-discord-bridge-test";
-            assert service.serviceConfig.EnvironmentFile == "/run/secrets/opencode-discord-bridge.env";
+            assert service.serviceConfig.EnvironmentFile == "/run/opencode-discord-bridge.env";
+            assert service.environment.OCB_SECRETS_FILE == "~/secrets/ocb_secrets.env";
             assert builtins.elem "network-online.target" service.after;
             assert nixpkgs.lib.hasInfix "STATE_FILE=/var/lib/opencode-discord-bridge-test/bindings.json" service.serviceConfig.ExecStart;
+            assert !nixpkgs.lib.hasInfix "DISCORD_TOKEN" service.serviceConfig.ExecStart;
             pkgs.runCommand "opencode-discord-bridge-module-eval" { } ''
               touch "$out"
             '';

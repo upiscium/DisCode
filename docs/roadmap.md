@@ -49,8 +49,9 @@ Discord never accepts an arbitrary OpenCode URL, hostname, username, or credenti
 
 Status: **In progress (2026-08-27)**
 
-- Phase 4A / Issue #34: reproducible Nix package plus NixOS/systemd service lifecycle.
-- Secret injection through systemd credentials rather than `.env` where appropriate.
+- Phase 4A / Issue #34: **Complete** — reproducible Nix package plus NixOS/systemd service lifecycle, persistent state, restart/stop smoke validation.
+- Phase 4B / Issue #36: **In progress** — optional dotenv-style secret file from an operator-selected path such as `~/secrets/ocb_secrets.env`, with runtime precedence `process environment > secret file > repository .env`.
+- Optional systemd `LoadCredential=` copy/isolation can be added later without changing the application secret-variable contract.
 - Structured logging and metrics.
 - State migration strategy or SQLite if concurrency/lifecycle complexity justifies it.
 - Reconnection reconciliation for pending permissions.
