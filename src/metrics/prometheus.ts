@@ -2,7 +2,7 @@ import { Counter, Gauge, Histogram, Registry } from "@prometheus-io/client";
 import type { SessionBinding } from "../domain/session-binding.js";
 import type { LogFields, LoggerLike } from "../logging/logger.js";
 import {
-  type OpenCodeHostHealthProbeOptions,
+  type OpenCodeHealthProbeOptions,
   type OpenCodeHostHealthTarget,
   type OpenCodeHttpHealth,
   type OpenCodeSseState,
@@ -48,7 +48,7 @@ type ProbeHostsOptions = Readonly<{
 
 type ProbeHosts = (
   targets: readonly OpenCodeHostHealthTarget[],
-  probe?: (options: OpenCodeHostHealthProbeOptions) => Promise<OpenCodeHttpHealth>,
+  probe?: (options: OpenCodeHealthProbeOptions) => Promise<OpenCodeHttpHealth>,
   options?: ProbeHostsOptions,
 ) => Promise<
   readonly Readonly<{
