@@ -7,6 +7,8 @@ import { loadConfig } from "./config.js";
 import { DirectoryPolicy } from "./domain/directory-policy.js";
 import type { OpenCodeHostConfig } from "./domain/host-registry.js";
 import { Logger } from "./logging/logger.js";
+import { PrometheusMetrics } from "./metrics/prometheus.js";
+import { MetricsServer } from "./metrics/server.js";
 import { OpenCodeSseMonitor, setOpenCodeHealthLogger } from "./opencode/diagnostics.js";
 import {
   type OpenCodeHostRuntime,
@@ -17,13 +19,15 @@ import { createOpenCodeDirectoryResolver } from "./opencode/remote-directory-res
 import { loadSecretEnvironment } from "./secrets.js";
 import { StateStore } from "./state/state-store.js";
 
+const BRIDGE_VERSION = "0.1.0";
+
 loadSecretEnvironment();
 if (existsSync(".env")) {
   loadEnvFile(".env");
 }
 
 const config = loadConfig();
-const logger = new Logger({
+const baseLogger = new Logger({
   level: config.logLevel,
   format: config.logFormat,
   secrets: [
@@ -37,7 +41,7 @@ const logger = new Logger({
     }),
   ],
 });
-setOpenCodeHealthLogger(logger);
+setOpenCodeHealthLogger(baseLogger);
 
 const defaultHostId = config.hostRegistry.defaultHost().id;
 const state = new StateStore(config.stateFile, defaultHostId);
@@ -56,14 +60,14 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
     hostId: host.id,
     discordToken: config.discordToken,
     state,
-    logger,
+    logger: baseLogger,
   });
   const toolSummaryPublisher = new ToolSummaryPublisher({
     enabled: config.showToolSummaries,
     hostId: host.id,
     discordToken: config.discordToken,
     state,
-    logger,
+    logger: baseLogger,
   });
   const gateway = new ObservedOpenCodeGateway({
     hostId: host.id,
@@ -71,7 +75,7 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
     username: host.username,
     ...(host.password ? { password: host.password } : {}),
     observers: [toolSummaryPublisher, streamingPublisher],
-    logger,
+    logger: baseLogger,
   });
 
   return {
@@ -84,18 +88,35 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
 });
 
 const hosts = new OpenCodeHostRuntimeRegistry(defaultHostId, hostRuntimes);
-const bridge = new Bridge({ config, state, hosts, logger });
+const metrics = new PrometheusMetrics({
+  version: BRIDGE_VERSION,
+  hosts,
+  state,
+});
+const bridgeLogger = metrics.instrumentLogger(baseLogger);
+const metricsServer = new MetricsServer({
+  enabled: config.metricsEnabled,
+  host: config.metricsHost,
+  port: config.metricsPort,
+  exporter: metrics,
+  logger: baseLogger,
+});
+const bridge = new Bridge({ config, state, hosts, logger: bridgeLogger });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
-    void bridge.stop().finally(() => process.exit(0));
+    void bridge
+      .stop()
+      .finally(() => metricsServer.stop())
+      .finally(() => process.exit(0));
   });
 }
 
 process.on("unhandledRejection", (error) => {
-  logger.error("process.unhandled_rejection", "Unhandled promise rejection", {}, error);
+  baseLogger.error("process.unhandled_rejection", "Unhandled promise rejection", {}, error);
 });
 
+await metricsServer.start();
 await bridge.start();
 
 function lazyDirectoryAuthorizer(host: OpenCodeHostConfig): (directory: string) => Promise<string> {
