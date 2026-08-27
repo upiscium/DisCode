@@ -80,6 +80,8 @@
           module-eval = moduleEvalCheck;
           entrypoint = pkgs.runCommand "opencode-discord-bridge-entrypoint" { } ''
             test -x ${package}/bin/opencode-discord-bridge
+            test -f ${package}/lib/opencode-discord-bridge/dist/index.js
+            test -d ${package}/lib/opencode-discord-bridge/node_modules
             touch "$out"
           '';
         });

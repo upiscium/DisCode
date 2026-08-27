@@ -22,10 +22,21 @@ buildNpmPackage {
 
   nativeBuildInputs = [ makeWrapper ];
 
-  postInstall = ''
-    mkdir -p "$out/bin"
+  installPhase = ''
+    runHook preInstall
+
+    npm prune --omit=dev --no-save --offline
+
+    runtimeDir="$out/lib/opencode-discord-bridge"
+    mkdir -p "$runtimeDir" "$out/bin"
+    cp -r dist "$runtimeDir/dist"
+    cp package.json "$runtimeDir/package.json"
+    cp -r node_modules "$runtimeDir/node_modules"
+
     makeWrapper ${nodejs_22}/bin/node "$out/bin/opencode-discord-bridge" \
-      --add-flags "$out/lib/node_modules/${packageJson.name}/dist/index.js"
+      --add-flags "$runtimeDir/dist/index.js"
+
+    runHook postInstall
   '';
 
   meta = {
