@@ -10,11 +10,7 @@ type PermissionReconcileHost = Readonly<{
 type ReconcileOptions = Readonly<{
   bindings: readonly Pick<SessionBinding, "hostId" | "sessionId" | "directory">[];
   hosts: readonly PermissionReconcileHost[];
-  publish: (
-    hostId: string,
-    directory: string,
-    request: OpenCodePermissionRequest,
-  ) => Promise<void>;
+  publish: (hostId: string, directory: string, request: OpenCodePermissionRequest) => Promise<void>;
   logger: LoggerLike;
 }>;
 

@@ -588,19 +588,19 @@ export class Bridge {
         await this.#refreshHeadersForDirectory(hostId, directory);
         break;
       case "permission.updated": {
-      const permission = event.properties;
-      await this.#publishPermission(hostId, directory, {
-        id: permission.id,
-        sessionID: permission.sessionID,
-        type: permission.type,
-        title: permission.title,
-        pattern: permissionPatterns(permission.pattern),
-      });
-      break;
-    }
-    case "permission.replied":
-      this.#permissions.clear(hostId, event.properties.permissionID);
-      break;
+        const permission = event.properties;
+        await this.#publishPermission(hostId, directory, {
+          id: permission.id,
+          sessionID: permission.sessionID,
+          type: permission.type,
+          title: permission.title,
+          pattern: permissionPatterns(permission.pattern),
+        });
+        break;
+      }
+      case "permission.replied":
+        this.#permissions.clear(hostId, event.properties.permissionID);
+        break;
       case "question.asked":
         await this.#publishQuestion(hostId, event.properties);
         break;
@@ -737,121 +737,118 @@ export class Bridge {
   }
 
   async #reconcilePendingPermissions(): Promise<void> {
-  await reconcilePendingPermissions({
-    bindings: this.#state.list(),
-    hosts: this.#hosts.list().map((runtime) => ({
-      id: runtime.id,
-      listPermissions: (directory: string) => runtime.gateway.listPermissions(directory),
-    })),
-    publish: (hostId, directory, request) =>
-      this.#publishPermission(hostId, directory, request),
-    logger: this.#logger,
-  });
-}
+    await reconcilePendingPermissions({
+      bindings: this.#state.list(),
+      hosts: this.#hosts.list().map((runtime) => ({
+        id: runtime.id,
+        listPermissions: (directory: string) => runtime.gateway.listPermissions(directory),
+      })),
+      publish: (hostId, directory, request) => this.#publishPermission(hostId, directory, request),
+      logger: this.#logger,
+    });
+  }
 
-async #publishPermission(
-  hostId: string,
-  directory: string,
-  permission: OpenCodePermissionRequest,
-): Promise<void> {
-  const binding = this.#state.getBySession(hostId, permission.sessionID);
-  if (!binding || binding.directory !== directory) return;
+  async #publishPermission(
+    hostId: string,
+    directory: string,
+    permission: OpenCodePermissionRequest,
+  ): Promise<void> {
+    const binding = this.#state.getBySession(hostId, permission.sessionID);
+    if (!binding || binding.directory !== directory) return;
 
-  await this.#permissions.publish(hostId, permission, async () => {
-    const thread = await this.#fetchThread(binding.threadId);
-    if (!thread) throw new Error("Bound Discord thread could not be fetched");
+    await this.#permissions.publish(hostId, permission, async () => {
+      const thread = await this.#fetchThread(binding.threadId);
+      if (!thread) throw new Error("Bound Discord thread could not be fetched");
 
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(permissionCustomId("once", permission.sessionID, permission.id))
-        .setLabel("Allow once")
-        .setStyle(ButtonStyle.Success),
-    );
-    if (this.#config.allowPermissionAlways) {
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(permissionCustomId("once", permission.sessionID, permission.id))
+          .setLabel("Allow once")
+          .setStyle(ButtonStyle.Success),
+      );
+      if (this.#config.allowPermissionAlways) {
+        row.addComponents(
+          new ButtonBuilder()
+            .setCustomId(permissionCustomId("always", permission.sessionID, permission.id))
+            .setLabel("Allow always")
+            .setStyle(ButtonStyle.Secondary),
+        );
+      }
       row.addComponents(
         new ButtonBuilder()
-          .setCustomId(permissionCustomId("always", permission.sessionID, permission.id))
-          .setLabel("Allow always")
-          .setStyle(ButtonStyle.Secondary),
+          .setCustomId(permissionCustomId("reject", permission.sessionID, permission.id))
+          .setLabel("Reject")
+          .setStyle(ButtonStyle.Danger),
       );
+
+      const patternText = permission.pattern.join(", ");
+      await thread.send({
+        content: [
+          "⚠️ **OpenCode permission requested**",
+          `Title: ${truncate(permission.title, 500)}`,
+          `Type: \`${escapeInlineCode(permission.type)}\``,
+          ...(patternText ? [`Pattern: \`${escapeInlineCode(truncate(patternText, 900))}\``] : []),
+        ].join("\n"),
+        components: [row],
+      });
+    });
+  }
+
+  async #handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
+    const parsed = parsePermissionCustomId(interaction.customId);
+    if (!parsed) return;
+    if (parsed.response === "always" && !this.#config.allowPermissionAlways) {
+      await interaction.reply({
+        content: "Persistent permission approval is disabled.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
     }
-    row.addComponents(
-      new ButtonBuilder()
-        .setCustomId(permissionCustomId("reject", permission.sessionID, permission.id))
-        .setLabel("Reject")
-        .setStyle(ButtonStyle.Danger),
+
+    const binding = this.#state.getByThread(interaction.channelId);
+    const pending = binding
+      ? this.#permissions.current(binding.hostId, parsed.permissionId)
+      : undefined;
+    if (
+      !binding ||
+      binding.sessionId !== parsed.sessionId ||
+      pending?.sessionID !== parsed.sessionId
+    ) {
+      await interaction.reply({
+        content: "This permission request is no longer pending for this thread.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const runtime = this.#runtimeFor(binding);
+    const current = await runtime.gateway.listPermissions(binding.directory);
+    const stillPending = current.some(
+      (request) => request.id === parsed.permissionId && request.sessionID === parsed.sessionId,
     );
+    if (!stillPending) {
+      this.#permissions.clear(binding.hostId, parsed.permissionId);
+      await interaction.reply({
+        content: "This permission request is no longer pending for this thread.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
 
-    const patternText = permission.pattern.join(", ");
-    await thread.send({
-      content: [
-        "⚠️ **OpenCode permission requested**",
-        `Title: ${truncate(permission.title, 500)}`,
-        `Type: \`${escapeInlineCode(permission.type)}\``,
-        ...(patternText
-          ? [`Pattern: \`${escapeInlineCode(truncate(patternText, 900))}\``]
-          : []),
-      ].join("\n"),
-      components: [row],
-    });
-  });
-}
-
-async #handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
-  const parsed = parsePermissionCustomId(interaction.customId);
-  if (!parsed) return;
-  if (parsed.response === "always" && !this.#config.allowPermissionAlways) {
-    await interaction.reply({
-      content: "Persistent permission approval is disabled.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const binding = this.#state.getByThread(interaction.channelId);
-  const pending = binding
-    ? this.#permissions.current(binding.hostId, parsed.permissionId)
-    : undefined;
-  if (
-    !binding ||
-    binding.sessionId !== parsed.sessionId ||
-    pending?.sessionID !== parsed.sessionId
-  ) {
-    await interaction.reply({
-      content: "This permission request is no longer pending for this thread.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const runtime = this.#runtimeFor(binding);
-  const current = await runtime.gateway.listPermissions(binding.directory);
-  const stillPending = current.some(
-    (request) => request.id === parsed.permissionId && request.sessionID === parsed.sessionId,
-  );
-  if (!stillPending) {
+    await runtime.gateway.replyPermission(
+      binding.directory,
+      parsed.sessionId,
+      parsed.permissionId,
+      parsed.response,
+    );
     this.#permissions.clear(binding.hostId, parsed.permissionId);
-    await interaction.reply({
-      content: "This permission request is no longer pending for this thread.",
-      flags: MessageFlags.Ephemeral,
+    await interaction.update({
+      content: `${interaction.message.content}\n\nResolved by <@${interaction.user.id}>: **${parsed.response}**`,
+      components: [],
     });
-    return;
   }
 
-  await runtime.gateway.replyPermission(
-    binding.directory,
-    parsed.sessionId,
-    parsed.permissionId,
-    parsed.response,
-  );
-  this.#permissions.clear(binding.hostId, parsed.permissionId);
-  await interaction.update({
-    content: `${interaction.message.content}\n\nResolved by <@${interaction.user.id}>: **${parsed.response}**`,
-    components: [],
-  });
-}
-
-async #publishResult(hostId: string, sessionId: string): Promise<void> {
+  async #publishResult(hostId: string, sessionId: string): Promise<void> {
     const binding = this.#state.getBySession(hostId, sessionId);
     if (!binding) return;
     const result = await this.#hosts
@@ -896,7 +893,6 @@ async #publishResult(hostId: string, sessionId: string): Promise<void> {
 function sessionKey(hostId: string, sessionId: string): string {
   return `${hostId}:${sessionId}`;
 }
-
 
 function permissionPatterns(value: unknown): string[] {
   if (Array.isArray(value)) {

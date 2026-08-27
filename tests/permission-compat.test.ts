@@ -145,9 +145,7 @@ describe("OpenCode permission compatibility", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const call = fetchMock.mock.calls[0];
-    expect(String(call?.[0])).toBe(
-      "http://127.0.0.1:4096/permission?directory=%2Frepo+with+space",
-    );
+    expect(String(call?.[0])).toBe("http://127.0.0.1:4096/permission?directory=%2Frepo+with+space");
     expect(call?.[1]).toMatchObject({
       method: "GET",
       headers: {
@@ -157,7 +155,10 @@ describe("OpenCode permission compatibility", () => {
   });
 
   it("fails closed when the pending permission list response is malformed", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json([{ id: "per_1" }])));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json([{ id: "per_1" }])),
+    );
     const gateway = new OpenCodeGateway({
       baseUrl: "http://127.0.0.1:4096",
       username: "opencode",
