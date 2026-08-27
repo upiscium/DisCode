@@ -1,16 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openCodeCommand } from "../src/discord/commands.js";
 import { renderHealthDiagnostic } from "../src/discord/health.js";
+import { type LoggerLike, noopLogger } from "../src/logging/logger.js";
 import {
   type OpenCodeHealthProbeOptions,
   type OpenCodeHttpHealth,
   OpenCodeSseMonitor,
   probeOpenCodeHealth,
   probeOpenCodeHostsHealth,
+  setOpenCodeHealthLogger,
 } from "../src/opencode/diagnostics.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setOpenCodeHealthLogger(noopLogger);
 });
 
 describe("operator health diagnostics", () => {
@@ -126,6 +129,45 @@ describe("operator health diagnostics", () => {
 
     expect(health[0]?.http).toEqual({ kind: "healthy", version: "1.18.20" });
     expect(health[1]?.http).toEqual({ kind: "unreachable" });
+  });
+
+  it("logs degraded host health with stable host-aware fields and no endpoint payload", async () => {
+    const warn = vi.fn<LoggerLike["warn"]>();
+    setOpenCodeHealthLogger({ ...noopLogger, warn });
+
+    await probeOpenCodeHostsHealth(
+      [
+        {
+          id: "host-1",
+          isDefault: true,
+          baseUrl: "http://127.0.0.1:4096",
+          username: "opencode",
+          sse: "connected",
+        },
+        {
+          id: "host-2",
+          isDefault: false,
+          baseUrl: "http://10.12.0.2:4096",
+          username: "opencode",
+          sse: "disconnected",
+        },
+      ],
+      async (options) =>
+        options.baseUrl.includes("10.12.0.2")
+          ? { kind: "unreachable" }
+          : { kind: "healthy", version: "1.18.20" },
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("opencode.health_degraded", "OpenCode host health degraded", {
+      host_id: "host-2",
+      http_state: "unreachable",
+      sse_state: "disconnected",
+    });
+    const loggedFields = warn.mock.calls[0]?.[2] ?? {};
+    expect(JSON.stringify(loggedFields)).not.toContain("10.12.0.2");
+    expect(loggedFields).not.toHaveProperty("base_url");
+    expect(loggedFields).not.toHaveProperty("username");
   });
 
   it("renders aggregate ready state when every host is healthy and connected", () => {

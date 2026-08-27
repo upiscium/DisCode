@@ -1,3 +1,5 @@
+import { type LoggerLike, noopLogger } from "../logging/logger.js";
+
 export type OpenCodeHttpHealth =
   | { kind: "healthy"; version?: string }
   | { kind: "unauthorized"; status: number }
@@ -29,6 +31,12 @@ export type OpenCodeHostHealthDiagnostic = Readonly<{
   http: OpenCodeHttpHealth;
   sse: OpenCodeSseState;
 }>;
+
+let healthLogger: LoggerLike = noopLogger;
+
+export function setOpenCodeHealthLogger(logger: LoggerLike): void {
+  healthLogger = logger;
+}
 
 export async function probeOpenCodeHealth(
   options: OpenCodeHealthProbeOptions,
@@ -77,7 +85,7 @@ export async function probeOpenCodeHostsHealth(
   targets: readonly OpenCodeHostHealthTarget[],
   probe: (options: OpenCodeHealthProbeOptions) => Promise<OpenCodeHttpHealth> = probeOpenCodeHealth,
 ): Promise<readonly OpenCodeHostHealthDiagnostic[]> {
-  return Promise.all(
+  const diagnostics = await Promise.all(
     targets.map(async (target) => {
       let http: OpenCodeHttpHealth;
       try {
@@ -98,6 +106,18 @@ export async function probeOpenCodeHostsHealth(
       };
     }),
   );
+
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.http.kind === "healthy" && diagnostic.sse === "connected") continue;
+    healthLogger.warn("opencode.health_degraded", "OpenCode host health degraded", {
+      host_id: diagnostic.id,
+      http_state: diagnostic.http.kind,
+      sse_state: diagnostic.sse,
+      ...healthHttpStatusField(diagnostic.http),
+    });
+  }
+
+  return diagnostics;
 }
 
 export class OpenCodeSseMonitor {
@@ -116,6 +136,13 @@ export class OpenCodeSseMonitor {
     if (this.#lastEventAt === undefined) return "disconnected";
     return now - this.#lastEventAt <= this.#staleAfterMs ? "connected" : "disconnected";
   }
+}
+
+function healthHttpStatusField(health: OpenCodeHttpHealth): { http_status?: number } {
+  if (health.kind === "unauthorized" || health.kind === "http_error") {
+    return { http_status: health.status };
+  }
+  return {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

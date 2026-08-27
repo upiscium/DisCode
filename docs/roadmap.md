@@ -50,9 +50,10 @@ Discord never accepts an arbitrary OpenCode URL, hostname, username, or credenti
 Status: **In progress (2026-08-27)**
 
 - Phase 4A / Issue #34: **Complete** — reproducible Nix package plus NixOS/systemd service lifecycle, persistent state, restart/stop smoke validation.
-- Phase 4B / Issue #36: **In progress** — optional dotenv-style secret file from an operator-selected path such as `~/secrets/ocb_secrets.env`, with runtime precedence `process environment > secret file > repository .env`.
+- Phase 4B / Issue #36: **Complete** — optional dotenv-style secret file from an operator-selected path such as `~/secrets/ocb_secrets.env`, with runtime precedence `process environment > secret file > repository .env` and real-environment fail-closed/leakage validation.
+- Phase 4C / Issue #38: **In progress** — structured JSON logging foundation with stable event names, host/session/thread context, log-level filtering, and explicit privacy/redaction boundaries.
+- Phase 4D: metrics semantics/export after the structured event/context contract is stable. Prometheus/OpenMetrics/OpenTelemetry network surfaces are intentionally not part of Phase 4C.
 - Optional systemd `LoadCredential=` copy/isolation can be added later without changing the application secret-variable contract.
-- Structured logging and metrics.
 - State migration strategy or SQLite if concurrency/lifecycle complexity justifies it.
 - Reconnection reconciliation for pending permissions.
 

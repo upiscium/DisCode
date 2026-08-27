@@ -24,6 +24,7 @@ import { renderHealthDiagnostic } from "../discord/health.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
 import { renderSessionStatus } from "../discord/status.js";
 import type { SessionBinding } from "../domain/session-binding.js";
+import { type LoggerLike, noopLogger } from "../logging/logger.js";
 import { probeOpenCodeHostsHealth } from "../opencode/diagnostics.js";
 import type {
   OpenCodeEvent,
@@ -50,6 +51,7 @@ export class Bridge {
   readonly #config: AppConfig;
   readonly #state: StateStore;
   readonly #hosts: OpenCodeHostRuntimeRegistry;
+  readonly #logger: LoggerLike;
   readonly #discord: Client;
   readonly #abortController = new AbortController();
   readonly #seenPermissions = new Set<string>();
@@ -60,10 +62,12 @@ export class Bridge {
     config: AppConfig;
     state: StateStore;
     hosts: OpenCodeHostRuntimeRegistry;
+    logger?: LoggerLike;
   }) {
     this.#config = options.config;
     this.#state = options.state;
     this.#hosts = options.hosts;
+    this.#logger = options.logger ?? noopLogger;
     this.#discord = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -79,6 +83,9 @@ export class Bridge {
   }
 
   async start(): Promise<void> {
+    this.#logger.info("bridge.starting", "Bridge starting", {
+      host_count: this.#hosts.list().length,
+    });
     await this.#registerCommands();
     this.#discord.on("interactionCreate", (interaction) => {
       void this.#handleInteraction(interaction).catch((error) =>
@@ -87,22 +94,29 @@ export class Bridge {
     });
     this.#discord.on("messageCreate", (message) => {
       void this.#handleMessage(message).catch(async (error) => {
-        console.error("Discord message handling failed", error);
+        this.#logger.error(
+          "discord.message_failed",
+          "Discord message handling failed",
+          { thread_id: message.channelId },
+          error,
+        );
         await message
           .reply(`Bridge error: ${truncate(errorMessage(error), 1600)}`)
           .catch(() => undefined);
       });
     });
-    this.#discord.once(Events.ClientReady, (client) => {
-      console.log(`Discord connected as ${client.user.tag}`);
+    this.#discord.once(Events.ClientReady, () => {
+      this.#logger.info("discord.connected", "Discord client connected");
     });
 
     await this.#discord.login(this.#config.discordToken);
     for (const runtime of this.#hosts.list()) {
       void this.#consumeOpenCodeEvents(runtime).catch((error) => {
         if (!this.#abortController.signal.aborted) {
-          console.error(
-            `OpenCode event consumer stopped unexpectedly for host ${runtime.id}`,
+          this.#logger.error(
+            "opencode.consumer_failed",
+            "OpenCode event consumer stopped unexpectedly",
+            { host_id: runtime.id },
             error,
           );
         }
@@ -110,15 +124,25 @@ export class Bridge {
     }
     await this.#reconcilePendingQuestions();
     await this.#reconcileSessionHeaders();
+    this.#logger.info("bridge.started", "Bridge started", {
+      host_count: this.#hosts.list().length,
+    });
   }
 
   async stop(): Promise<void> {
+    this.#logger.info("bridge.stopping", "Bridge stopping");
     this.#abortController.abort();
     this.#discord.destroy();
+    this.#logger.info("bridge.stopped", "Bridge stopped");
   }
 
   async #handleInteractionFailure(interaction: Interaction, error: unknown): Promise<void> {
-    console.error("Discord interaction failed", error);
+    this.#logger.error(
+      "discord.interaction_failed",
+      "Discord interaction failed",
+      { interaction: interactionKind(interaction) },
+      error,
+    );
     if (!interaction.isRepliable()) return;
     const content = `Bridge error: ${truncate(errorMessage(error), 1600)}`;
     if (interaction.deferred || interaction.replied) {
@@ -250,15 +274,54 @@ export class Bridge {
         `Created <#${thread.id}> for OpenCode host \`${runtime.id}\`, session \`${session.id}\`.`,
       );
       await this.#refreshSessionHeader(runtime.id, binding.sessionId);
+      this.#logger.info("session.created", "OpenCode session created", {
+        host_id: runtime.id,
+        session_id: session.id,
+        thread_id: thread.id,
+      });
     } catch (error) {
       if (thread) {
-        await this.#state.remove(thread.id).catch(() => undefined);
+        await this.#state.remove(thread.id).catch((rollbackError) => {
+          this.#logger.error(
+            "session.rollback_failed",
+            "Failed to roll back Bridge state",
+            {
+              host_id: runtime.id,
+              session_id: session.id,
+              thread_id: thread?.id,
+              rollback_stage: "state",
+            },
+            rollbackError,
+          );
+        });
         await thread
           .delete("Rolling back failed OpenCode bridge session creation")
-          .catch(() => undefined);
+          .catch((rollbackError) => {
+            this.#logger.error(
+              "session.rollback_failed",
+              "Failed to roll back Discord thread",
+              {
+                host_id: runtime.id,
+                session_id: session.id,
+                thread_id: thread?.id,
+                rollback_stage: "discord_thread",
+              },
+              rollbackError,
+            );
+          });
       }
       await runtime.gateway.deleteSession(directory, session.id).catch((rollbackError) => {
-        console.error(`Failed to roll back OpenCode session on host ${runtime.id}`, rollbackError);
+        this.#logger.error(
+          "session.rollback_failed",
+          "Failed to roll back OpenCode session",
+          {
+            host_id: runtime.id,
+            session_id: session.id,
+            ...(thread ? { thread_id: thread.id } : {}),
+            rollback_stage: "opencode_session",
+          },
+          rollbackError,
+        );
       });
       throw error;
     }
@@ -346,6 +409,11 @@ export class Bridge {
       removeBinding: () => this.#state.remove(binding.threadId),
     });
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
+    this.#logger.info("session.closed", "OpenCode session closed", {
+      host_id: binding.hostId,
+      session_id: binding.sessionId,
+      thread_id: binding.threadId,
+    });
 
     await interaction.editReply(
       `Closed OpenCode session \`${binding.hostId}/${binding.sessionId}\` and removed this Discord binding. Archiving the thread.`,
@@ -359,6 +427,16 @@ export class Bridge {
         `OpenCode session ${binding.hostId}/${binding.sessionId} closed`,
       );
     } catch (error) {
+      this.#logger.warn(
+        "discord.thread_archive_failed",
+        "Discord thread could not be archived after session close",
+        {
+          host_id: binding.hostId,
+          session_id: binding.sessionId,
+          thread_id: binding.threadId,
+        },
+        error,
+      );
       await interaction.followUp({
         content: `The OpenCode session was deleted and unbound, but the Discord thread could not be archived: ${truncate(errorMessage(error), 1200)}`,
         flags: MessageFlags.Ephemeral,
@@ -392,6 +470,11 @@ export class Bridge {
       removeBinding: () => this.#state.remove(binding.threadId),
     });
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
+    this.#logger.info("session.unbound", "Discord thread unbound from OpenCode session", {
+      host_id: binding.hostId,
+      session_id: binding.sessionId,
+      thread_id: binding.threadId,
+    });
     await interaction.editReply(
       [
         `Unbound this thread from OpenCode session \`${binding.hostId}/${binding.sessionId}\`.`,
@@ -470,8 +553,13 @@ export class Bridge {
       runtime.sseMonitor.observe();
       await this.#handleOpenCodeEvent(runtime.id, globalEvent.payload, globalEvent.directory).catch(
         (error) => {
-          console.error(
-            `Failed to handle OpenCode event ${globalEvent.payload.type} for host ${runtime.id}`,
+          this.#logger.error(
+            "opencode.event_failed",
+            "Failed to handle OpenCode event",
+            {
+              host_id: runtime.id,
+              opencode_event: globalEvent.payload.type,
+            },
             error,
           );
         },
@@ -532,7 +620,12 @@ export class Bridge {
     try {
       await this.#sessionHeaders.refreshSession(hostId, sessionId);
     } catch (error) {
-      console.error(`Failed to refresh Discord session header for ${hostId}/${sessionId}`, error);
+      this.#logger.warn(
+        "discord.session_header_failed",
+        "Failed to refresh Discord session header",
+        { host_id: hostId, session_id: sessionId },
+        error,
+      );
     }
   }
 
@@ -568,8 +661,10 @@ export class Bridge {
             }
           }
         } catch (error) {
-          console.error(
-            `Failed to reconcile pending OpenCode questions for ${runtime.id}:${directory}`,
+          this.#logger.warn(
+            "opencode.question_reconcile_failed",
+            "Failed to reconcile pending OpenCode questions",
+            { host_id: runtime.id },
             error,
           );
         }
@@ -731,6 +826,11 @@ export class Bridge {
     if (!binding) return;
     const thread = await this.#fetchThread(binding.threadId);
     if (!thread) return;
+    this.#logger.warn("opencode.session_error", "OpenCode session reported an error", {
+      host_id: hostId,
+      session_id: sessionId,
+      thread_id: binding.threadId,
+    });
     const details = errorMessage(error);
     await thread.send(`❌ **OpenCode session error**\n${truncate(details, 1800)}`);
   }
@@ -789,6 +889,12 @@ function parseQuestionCustomId(
     return undefined;
   }
   return { sessionId, requestId };
+}
+
+function interactionKind(interaction: Interaction): string {
+  if (interaction.isChatInputCommand()) return "chat_input";
+  if (interaction.isButton()) return "button";
+  return "other";
 }
 
 function escapeInlineCode(value: string): string {

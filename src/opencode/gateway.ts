@@ -6,6 +6,7 @@ import {
   type Session,
   type SessionStatus,
 } from "@opencode-ai/sdk";
+import { type LoggerLike, noopLogger } from "../logging/logger.js";
 
 export type OpenCodePermissionResponse = "once" | "always" | "reject";
 
@@ -73,8 +74,16 @@ export class OpenCodeGateway {
   readonly #client: ReturnType<typeof createOpencodeClient>;
   readonly #baseUrl: string;
   readonly #headers: Readonly<Record<string, string>>;
+  readonly #logger: LoggerLike;
+  readonly #hostId: string | undefined;
 
-  constructor(options: { baseUrl: string; username: string; password?: string }) {
+  constructor(options: {
+    baseUrl: string;
+    username: string;
+    password?: string;
+    hostId?: string;
+    logger?: LoggerLike;
+  }) {
     const headers: Record<string, string> = {};
     if (options.password) {
       const credentials = Buffer.from(`${options.username}:${options.password}`, "utf8").toString(
@@ -84,6 +93,8 @@ export class OpenCodeGateway {
     }
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
     this.#headers = headers;
+    this.#logger = options.logger ?? noopLogger;
+    this.#hostId = options.hostId;
     this.#client = createOpencodeClient({
       baseUrl: this.#baseUrl,
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
@@ -319,7 +330,15 @@ export class OpenCodeGateway {
         backoffMs = 1000;
       } catch (error) {
         if (signal?.aborted) return;
-        console.error("OpenCode event stream disconnected", error);
+        this.#logger.warn(
+          "opencode.stream_disconnected",
+          "OpenCode event stream disconnected",
+          {
+            ...(this.#hostId ? { host_id: this.#hostId } : {}),
+            retry_ms: backoffMs,
+          },
+          error,
+        );
         await sleep(backoffMs, signal);
         backoffMs = Math.min(backoffMs * 2, 30_000);
       }
