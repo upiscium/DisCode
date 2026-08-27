@@ -32,6 +32,12 @@ export type OpenCodeHostHealthDiagnostic = Readonly<{
   sse: OpenCodeSseState;
 }>;
 
+export type OpenCodeHostHealthProbeRunOptions = Readonly<{
+  emitDegradedLog?: boolean;
+  observeDuration?: (hostId: string, durationSeconds: number) => void;
+  now?: () => number;
+}>;
+
 let healthLogger: LoggerLike = noopLogger;
 
 export function setOpenCodeHealthLogger(logger: LoggerLike): void {
@@ -84,9 +90,12 @@ export async function probeOpenCodeHealth(
 export async function probeOpenCodeHostsHealth(
   targets: readonly OpenCodeHostHealthTarget[],
   probe: (options: OpenCodeHealthProbeOptions) => Promise<OpenCodeHttpHealth> = probeOpenCodeHealth,
+  options: OpenCodeHostHealthProbeRunOptions = {},
 ): Promise<readonly OpenCodeHostHealthDiagnostic[]> {
+  const now = options.now ?? (() => performance.now());
   const diagnostics = await Promise.all(
     targets.map(async (target) => {
+      const startedAt = now();
       let http: OpenCodeHttpHealth;
       try {
         http = await probe({
@@ -96,6 +105,8 @@ export async function probeOpenCodeHostsHealth(
         });
       } catch {
         http = { kind: "unreachable" };
+      } finally {
+        options.observeDuration?.(target.id, Math.max(0, (now() - startedAt) / 1000));
       }
 
       return {
@@ -107,14 +118,16 @@ export async function probeOpenCodeHostsHealth(
     }),
   );
 
-  for (const diagnostic of diagnostics) {
-    if (diagnostic.http.kind === "healthy" && diagnostic.sse === "connected") continue;
-    healthLogger.warn("opencode.health_degraded", "OpenCode host health degraded", {
-      host_id: diagnostic.id,
-      http_state: diagnostic.http.kind,
-      sse_state: diagnostic.sse,
-      ...healthHttpStatusField(diagnostic.http),
-    });
+  if (options.emitDegradedLog !== false) {
+    for (const diagnostic of diagnostics) {
+      if (diagnostic.http.kind === "healthy" && diagnostic.sse === "connected") continue;
+      healthLogger.warn("opencode.health_degraded", "OpenCode host health degraded", {
+        host_id: diagnostic.id,
+        http_state: diagnostic.http.kind,
+        sse_state: diagnostic.sse,
+        ...healthHttpStatusField(diagnostic.http),
+      });
+    }
   }
 
   return diagnostics;
