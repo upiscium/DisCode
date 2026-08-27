@@ -34,17 +34,9 @@ describe("metrics config", () => {
     expect(() => loadConfig({ ...baseEnv, OCB_METRICS_ENABLED: "yes" })).toThrow(
       /Expected boolean/,
     );
-    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_HOST: "   " })).toThrow(
-      /OCB_METRICS_HOST/,
-    );
-    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_PORT: "0" })).toThrow(
-      /OCB_METRICS_PORT/,
-    );
-    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_PORT: "65536" })).toThrow(
-      /OCB_METRICS_PORT/,
-    );
-    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_PORT: "9.5" })).toThrow(
-      /OCB_METRICS_PORT/,
-    );
+    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_HOST: "   " })).toThrow(/OCB_METRICS_HOST/);
+    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_PORT: "0" })).toThrow(/OCB_METRICS_PORT/);
+    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_PORT: "65536" })).toThrow(/OCB_METRICS_PORT/);
+    expect(() => loadConfig({ ...baseEnv, OCB_METRICS_PORT: "9.5" })).toThrow(/OCB_METRICS_PORT/);
   });
 });
