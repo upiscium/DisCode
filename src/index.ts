@@ -28,9 +28,7 @@ const logger = new Logger({
   format: config.logFormat,
   secrets: [
     config.discordToken,
-    ...config.hostRegistry
-      .list()
-      .flatMap((host) => (host.password ? [host.password] : [])),
+    ...config.hostRegistry.list().flatMap((host) => (host.password ? [host.password] : [])),
   ],
 });
 const defaultHostId = config.hostRegistry.defaultHost().id;

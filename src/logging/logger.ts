@@ -28,7 +28,8 @@ const LEVEL_RANK: Readonly<Record<LogLevel, number>> = {
 const REDACTED = "[REDACTED]";
 const OMITTED = "[OMITTED]";
 const SENSITIVE_KEY = /(token|password|authorization|secret|credential)/i;
-const CONTENT_KEY = /(^|_)(prompt|answer|tool_output|attachment_content|message_content|raw_content|content)($|_)/i;
+const CONTENT_KEY =
+  /(^|_)(prompt|answer|tool_output|attachment_content|message_content|raw_content|content)($|_)/i;
 
 export class Logger implements LoggerLike {
   readonly #level: LogLevel;
@@ -61,13 +62,7 @@ export class Logger implements LoggerLike {
     this.#emit("error", event, message, fields, error);
   }
 
-  #emit(
-    level: LogLevel,
-    event: string,
-    message: string,
-    fields: LogFields,
-    error?: unknown,
-  ): void {
+  #emit(level: LogLevel, event: string, message: string, fields: LogFields, error?: unknown): void {
     if (LEVEL_RANK[level] < LEVEL_RANK[this.#level]) return;
 
     const record: Record<string, unknown> = {
@@ -119,7 +114,12 @@ export const noopLogger: LoggerLike = Object.freeze({
 export function parseLogLevel(value: string | undefined, fallback: LogLevel = "info"): LogLevel {
   const normalized = value?.trim();
   if (!normalized) return fallback;
-  if (normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error") {
+  if (
+    normalized === "debug" ||
+    normalized === "info" ||
+    normalized === "warn" ||
+    normalized === "error"
+  ) {
     return normalized;
   }
   throw new Error("OCB_LOG_LEVEL must be one of: debug, info, warn, error");

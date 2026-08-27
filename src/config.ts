@@ -1,11 +1,6 @@
 import { resolve } from "node:path";
 import { HostRegistry, type OpenCodeHostConfig } from "./domain/host-registry.js";
-import {
-  type LogFormat,
-  type LogLevel,
-  parseLogFormat,
-  parseLogLevel,
-} from "./logging/logger.js";
+import { type LogFormat, type LogLevel, parseLogFormat, parseLogLevel } from "./logging/logger.js";
 
 export type AppConfig = {
   discordToken: string;
