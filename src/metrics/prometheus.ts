@@ -1,6 +1,6 @@
-import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import { Counter, Gauge, Histogram, Registry } from "@prometheus-io/client";
 import type { SessionBinding } from "../domain/session-binding.js";
-import type { LoggerLike, LogFields } from "../logging/logger.js";
+import type { LogFields, LoggerLike } from "../logging/logger.js";
 import {
   type OpenCodeHostHealthProbeOptions,
   type OpenCodeHostHealthTarget,
@@ -10,7 +10,6 @@ import {
 } from "../opencode/diagnostics.js";
 
 export type SessionMetricOperation = "created" | "closed" | "unbound";
-export type MetricsScrapeResult = "success" | "error";
 
 export type MetricsSnapshot = Readonly<{
   body: string;
