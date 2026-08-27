@@ -24,7 +24,7 @@ function fixture() {
     id: "host-1",
     config: {
       baseUrl: "http://127.0.0.1:4096",
-      username: "opencode",
+      username: "METRICS_USER_SENTINEL",
       password: "PASSWORD_SENTINEL",
     },
     sseMonitor: { status: () => "connected" as const },
@@ -33,7 +33,7 @@ function fixture() {
     id: "host-2",
     config: {
       baseUrl: "http://10.12.0.2:4096",
-      username: "opencode",
+      username: "SECOND_METRICS_USER_SENTINEL",
       password: "SECOND_PASSWORD_SENTINEL",
     },
     sseMonitor: { status: () => host2Sse },
@@ -168,7 +168,7 @@ describe("PrometheusMetrics", () => {
     );
   });
 
-  it("never exports secrets, endpoints, or high-cardinality binding/content identifiers", async () => {
+  it("never exports secrets, endpoints, usernames, or high-cardinality identifiers", async () => {
     const fx = fixture();
     const metrics = new PrometheusMetrics({
       version: "0.1.0",
@@ -190,9 +190,10 @@ describe("PrometheusMetrics", () => {
     for (const forbidden of [
       "PASSWORD_SENTINEL",
       "SECOND_PASSWORD_SENTINEL",
+      "METRICS_USER_SENTINEL",
+      "SECOND_METRICS_USER_SENTINEL",
       "127.0.0.1:4096",
       "10.12.0.2:4096",
-      "opencode",
       "ses_PRIVATE",
       "thread_PRIVATE",
       "/private/repo",
