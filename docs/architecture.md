@@ -134,6 +134,32 @@ process/systemd environment
 
 The NixOS module only places the secret-file path in the service environment; Nix never reads or serializes the file content. A configured Nix-store-backed `secretsFile` is rejected. The service user must have filesystem permission to read the selected file. Missing, unreadable, or malformed configured secret files fail startup without including secret contents in the error.
 
+## Structured logging / observability boundary
+
+Runtime logging is emitted through one logger contract rather than direct `console.*` calls. Every record has a stable machine-readable `event` plus timestamp, level, and human-readable message. JSON mode emits exactly one JSON object per line so journald/collector tooling can parse it without reconstructing multiline output.
+
+Typical JSON record:
+
+```json
+{
+  "timestamp": "2026-08-27T12:34:56.789Z",
+  "level": "info",
+  "event": "session.created",
+  "message": "OpenCode session created",
+  "host_id": "host-1",
+  "session_id": "ses_...",
+  "thread_id": "1234567890"
+}
+```
+
+The stable context policy intentionally favors identifiers over payloads. `host_id`, OpenCode `session_id`, Discord `thread_id`, coarse interaction kind, OpenCode event type, retry timing, and normalized error type/message may be logged when useful. Directory paths, Discord user/guild IDs, prompt/message text, Ask answers, attachment content, raw tool output, raw config objects, and raw Error objects/stacks are not part of the normal logging contract.
+
+Fields whose names indicate token/password/authorization/secret/credential data are always redacted. In addition, the production logger receives the resolved Discord token and OpenCode host passwords as known secret sentinels and removes those values if they become embedded in a message or normalized error string. This is defense in depth; callers must still avoid sending sensitive payloads to the logger at all.
+
+`OCB_LOG_LEVEL` controls `debug|info|warn|error`. `OCB_LOG_FORMAT` controls `json|pretty`. Manual execution defaults to `info/pretty`; the NixOS service defaults to `info/json` for journald ingestion.
+
+Phase 4C adds no metrics listener or other network surface. Counter/gauge/histogram semantics and Prometheus/OpenMetrics/OpenTelemetry export belong to Phase 4D, after stable logging event/context semantics are validated in production.
+
 ## Threat model assumptions
 
 - The Bridge process and configured host registry are trusted operator infrastructure.
