@@ -158,7 +158,27 @@ Fields whose names indicate token/password/authorization/secret/credential data 
 
 `OCB_LOG_LEVEL` controls `debug|info|warn|error`. `OCB_LOG_FORMAT` controls `json|pretty`. Manual execution defaults to `info/pretty`; the NixOS service defaults to `info/json` for journald ingestion.
 
-Phase 4C adds no metrics listener or other network surface. Counter/gauge/histogram semantics and Prometheus/OpenMetrics/OpenTelemetry export belong to Phase 4D, after stable logging event/context semantics are validated in production.
+## Prometheus metrics boundary
+
+Metrics are a stricter observability surface than structured logs because every label value contributes to time-series cardinality. The metrics endpoint is therefore disabled by default. When enabled it binds to `127.0.0.1:9464` unless the operator explicitly chooses another address or port. The Bridge does not add metrics auth/TLS and the NixOS module does not open firewall ports automatically.
+
+The initial metrics contract uses the `opencode_discord_bridge_` prefix and exposes only low-cardinality application state:
+
+- static Bridge build/version information;
+- aggregate readiness using the same HTTP-healthy plus SSE-connected semantics as `/oc health`;
+- per-configured-host HTTP health and SSE connectivity;
+- current persisted Discord/OpenCode binding count by host;
+- process-lifetime create/close/unbind operation counters;
+- per-host health-probe latency histogram;
+- bounded scrape success/error counters.
+
+Metrics labels may contain only operator-configured stable `host_id` values and fixed enumerations such as lifecycle `operation` or scrape `result`. OpenCode `session_id`, Discord `thread_id`, directory paths, Discord user/guild IDs, prompt/Ask/tool/output content, URLs, usernames, credentials, and arbitrary error strings are forbidden as metric labels or metric payload.
+
+Each `/metrics` scrape performs the same authenticated OpenCode `/global/health` probes used by `/oc health`, in parallel, and combines those results with the same per-host SSE freshness snapshot. The health-probe primitive is side-effect configurable: Discord `/oc health` preserves `opencode.health_degraded` warning emission, while Prometheus scrapes suppress repeated degraded warnings so scrape cadence does not amplify logs.
+
+`bound_sessions` is derived from current `StateStore` contents at scrape time rather than a process-local increment/decrement counter. It therefore reflects persisted bindings again after a Bridge restart. Lifecycle operation counters are intentionally process-lifetime counters and may reset on restart.
+
+Metrics collection does not alter OpenCode session/execution/permission state, does not expose Node process/GC default metrics, and does not deploy Prometheus, Grafana, alert rules, OpenTelemetry collectors, or other monitoring infrastructure.
 
 ## Threat model assumptions
 
@@ -169,6 +189,7 @@ Phase 4C adds no metrics listener or other network surface. Counter/gauge/histog
 - `Allow always` is disabled unless the operator explicitly opts in.
 - The bridge does not copy arbitrary tool output or environment variables into permission messages or host metadata.
 - The bridge does not accept arbitrary OpenCode URLs or secret-file paths from Discord and does not execute shell/tmux/PID-control operations itself.
+- A metrics listener configured on a non-loopback address is an explicit operator exposure decision and must be protected by deployment-level network controls as appropriate.
 
 ## Persistence model
 
