@@ -115,12 +115,8 @@ describe("PrometheusMetrics", () => {
     expect(snapshot.body).toContain(
       'opencode_discord_bridge_opencode_host_sse_connected{host_id="host-2"} 1',
     );
-    expect(snapshot.body).toContain(
-      'opencode_discord_bridge_bound_sessions{host_id="host-1"} 2',
-    );
-    expect(snapshot.body).toContain(
-      'opencode_discord_bridge_bound_sessions{host_id="host-2"} 1',
-    );
+    expect(snapshot.body).toContain('opencode_discord_bridge_bound_sessions{host_id="host-1"} 2');
+    expect(snapshot.body).toContain('opencode_discord_bridge_bound_sessions{host_id="host-2"} 1');
     expect(snapshot.body).toContain(
       'opencode_discord_bridge_session_operations_total{host_id="host-1",operation="created"} 1',
     );
