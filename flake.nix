@@ -61,6 +61,11 @@
                   secretsFile = "~/secrets/ocb_secrets.env";
                   logLevel = "warn";
                   logFormat = "json";
+                  metrics = {
+                    enable = true;
+                    address = "127.0.0.1";
+                    port = 19464;
+                  };
                   stateDirectory = "opencode-discord-bridge-test";
                   stateFile = "bindings.json";
                 };
@@ -68,6 +73,20 @@
             ];
           };
           service = testSystem.config.systemd.services.opencode-discord-bridge;
+          defaultMetricsSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                };
+              }
+            ];
+          };
+          defaultMetricsService = defaultMetricsSystem.config.systemd.services.opencode-discord-bridge;
           moduleEvalCheck =
             assert service.serviceConfig.Restart == "on-failure";
             assert service.serviceConfig.StateDirectory == "opencode-discord-bridge-test";
@@ -75,6 +94,13 @@
             assert service.environment.OCB_SECRETS_FILE == "~/secrets/ocb_secrets.env";
             assert service.environment.OCB_LOG_LEVEL == "warn";
             assert service.environment.OCB_LOG_FORMAT == "json";
+            assert service.environment.OCB_METRICS_ENABLED == "true";
+            assert service.environment.OCB_METRICS_HOST == "127.0.0.1";
+            assert service.environment.OCB_METRICS_PORT == "19464";
+            assert !(builtins.elem 19464 testSystem.config.networking.firewall.allowedTCPPorts);
+            assert defaultMetricsService.environment.OCB_METRICS_ENABLED == "false";
+            assert defaultMetricsService.environment.OCB_METRICS_HOST == "127.0.0.1";
+            assert defaultMetricsService.environment.OCB_METRICS_PORT == "9464";
             assert builtins.elem "network-online.target" service.after;
             assert nixpkgs.lib.hasInfix "STATE_FILE=/var/lib/opencode-discord-bridge-test/bindings.json" service.serviceConfig.ExecStart;
             assert !nixpkgs.lib.hasInfix "DISCORD_TOKEN" service.serviceConfig.ExecStart;

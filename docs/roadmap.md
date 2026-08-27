@@ -51,11 +51,13 @@ Status: **In progress (2026-08-27)**
 
 - Phase 4A / Issue #34: **Complete** — reproducible Nix package plus NixOS/systemd service lifecycle, persistent state, restart/stop smoke validation.
 - Phase 4B / Issue #36: **Complete** — optional dotenv-style secret file from an operator-selected path such as `~/secrets/ocb_secrets.env`, with runtime precedence `process environment > secret file > repository .env` and real-environment fail-closed/leakage validation.
-- Phase 4C / Issue #38: **In progress** — structured JSON logging foundation with stable event names, host/session/thread context, log-level filtering, and explicit privacy/redaction boundaries.
-- Phase 4D: metrics semantics/export after the structured event/context contract is stable. Prometheus/OpenMetrics/OpenTelemetry network surfaces are intentionally not part of Phase 4C.
+- Phase 4C / Issue #38: **Complete** — structured JSON logging foundation with stable event names, host/session/thread context, log-level filtering, explicit privacy/redaction boundaries, and Adam real-environment smoke validation.
+- Phase 4D / Issue #40: **In progress** — opt-in low-cardinality Prometheus/OpenMetrics scrape endpoint with loopback-only default exposure, host health/readiness gauges, persisted binding gauges, bounded lifecycle counters, and explicit metrics cardinality/privacy boundaries.
 - Optional systemd `LoadCredential=` copy/isolation can be added later without changing the application secret-variable contract.
 - State migration strategy or SQLite if concurrency/lifecycle complexity justifies it.
 - Reconnection reconciliation for pending permissions.
+
+Phase 4D does not deploy Prometheus, Grafana, alerting, OpenTelemetry collectors, or firewall rules. Those remain deployment/infrastructure concerns outside the Bridge application.
 
 ## Separate infrastructure work
 

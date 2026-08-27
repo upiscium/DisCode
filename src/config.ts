@@ -13,6 +13,9 @@ export type AppConfig = {
   showToolSummaries: boolean;
   logLevel: LogLevel;
   logFormat: LogFormat;
+  metricsEnabled: boolean;
+  metricsHost: string;
+  metricsPort: number;
   hostRegistry: HostRegistry;
   opencodeBaseUrl: string;
   opencodeUsername: string;
@@ -41,6 +44,24 @@ function boolean(value: string | undefined, fallback: boolean): boolean {
   if (value === "true") return true;
   if (value === "false") return false;
   throw new Error(`Expected boolean value, got: ${value}`);
+}
+
+function nonEmpty(value: string | undefined, fallback: string, key: string): string {
+  if (value === undefined) return fallback;
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${key} must be a non-empty string`);
+  return normalized;
+}
+
+function port(value: string | undefined, fallback: number, key: string): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) throw new Error(`${key} must be an integer from 1 to 65535`);
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 65_535) {
+    throw new Error(`${key} must be an integer from 1 to 65535`);
+  }
+  return parsed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -179,6 +200,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     showToolSummaries: boolean(env.DISCORD_SHOW_TOOL_SUMMARIES, false),
     logLevel: parseLogLevel(env.OCB_LOG_LEVEL, "info"),
     logFormat: parseLogFormat(env.OCB_LOG_FORMAT, "pretty"),
+    metricsEnabled: boolean(env.OCB_METRICS_ENABLED, false),
+    metricsHost: nonEmpty(env.OCB_METRICS_HOST, "127.0.0.1", "OCB_METRICS_HOST"),
+    metricsPort: port(env.OCB_METRICS_PORT, 9464, "OCB_METRICS_PORT"),
     hostRegistry,
     opencodeBaseUrl: defaultHost.baseUrl,
     opencodeUsername: defaultHost.username,
