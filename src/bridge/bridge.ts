@@ -37,7 +37,10 @@ import type {
   OpenCodeHostRuntimeRegistry,
 } from "../opencode/host-runtime-registry.js";
 import type { StateStore } from "../state/state-store.js";
-import { PermissionPublicationTracker } from "./permission-publication.js";
+import {
+  hasPendingPermissionRequest,
+  PermissionPublicationTracker,
+} from "./permission-publication.js";
 import { reconcilePendingPermissions } from "./permission-reconciliation.js";
 import { SessionHeaderManager } from "./session-header-manager.js";
 import {
@@ -823,8 +826,10 @@ export class Bridge {
 
     const runtime = this.#runtimeFor(binding);
     const current = await runtime.gateway.listPermissions(binding.directory);
-    const stillPending = current.some(
-      (request) => request.id === parsed.permissionId && request.sessionID === parsed.sessionId,
+    const stillPending = hasPendingPermissionRequest(
+      current,
+      parsed.sessionId,
+      parsed.permissionId,
     );
     if (!stillPending) {
       this.#permissions.clear(binding.hostId, parsed.permissionId);
