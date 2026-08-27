@@ -7,7 +7,7 @@ import { loadConfig } from "./config.js";
 import { DirectoryPolicy } from "./domain/directory-policy.js";
 import type { OpenCodeHostConfig } from "./domain/host-registry.js";
 import { Logger } from "./logging/logger.js";
-import { OpenCodeSseMonitor } from "./opencode/diagnostics.js";
+import { OpenCodeSseMonitor, setOpenCodeHealthLogger } from "./opencode/diagnostics.js";
 import {
   type OpenCodeHostRuntime,
   OpenCodeHostRuntimeRegistry,
@@ -37,6 +37,8 @@ const logger = new Logger({
     }),
   ],
 });
+setOpenCodeHealthLogger(logger);
+
 const defaultHostId = config.hostRegistry.defaultHost().id;
 const state = new StateStore(config.stateFile, defaultHostId);
 await state.load();
