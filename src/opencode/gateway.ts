@@ -24,6 +24,27 @@ export type OpenCodePromptFile = {
   url: string;
 };
 
+export type OpenCodeModelSelection = {
+  providerID: string;
+  modelID: string;
+};
+
+export type OpenCodePromptContext = {
+  model?: OpenCodeModelSelection;
+  agent?: string;
+};
+
+export type OpenCodeModelCandidate = OpenCodeModelSelection & {
+  providerName?: string;
+  modelName?: string;
+};
+
+export type OpenCodeAgentCandidate = {
+  name: string;
+  description?: string;
+  mode?: string;
+};
+
 export type OpenCodeQuestion = {
   question: string;
   header: string;
@@ -126,8 +147,13 @@ export class OpenCodeGateway {
     });
   }
 
-  async promptAsync(directory: string, sessionId: string, text: string): Promise<void> {
-    await this.promptAsyncWithFiles(directory, sessionId, text, []);
+  async promptAsync(
+    directory: string,
+    sessionId: string,
+    text: string,
+    context: OpenCodePromptContext = {},
+  ): Promise<void> {
+    await this.promptAsyncWithFiles(directory, sessionId, text, [], context);
   }
 
   async promptAsyncWithFiles(
@@ -135,6 +161,7 @@ export class OpenCodeGateway {
     sessionId: string,
     text: string,
     files: readonly OpenCodePromptFile[],
+    context: OpenCodePromptContext = {},
   ): Promise<void> {
     const parts = [
       ...(text.trim() ? [{ type: "text" as const, text }] : []),
@@ -151,7 +178,11 @@ export class OpenCodeGateway {
     await this.#client.session.promptAsync({
       path: { id: sessionId },
       query: { directory },
-      body: { parts },
+      body: {
+        ...(context.model ? { model: context.model } : {}),
+        ...(context.agent ? { agent: context.agent } : {}),
+        parts,
+      },
       throwOnError: true,
     });
   }
@@ -198,6 +229,42 @@ export class OpenCodeGateway {
     const latest = [...result.data].reverse().find((message) => message.info.role === "assistant");
     if (!latest) return undefined;
     return { messageId: latest.info.id, parts: latest.parts };
+  }
+
+  async listModels(directory: string): Promise<OpenCodeModelCandidate[]> {
+    const url = new URL(`${this.#baseUrl}/provider`);
+    url.searchParams.set("directory", directory);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: this.#headers,
+    });
+    if (!response.ok) {
+      throw new Error(`OpenCode provider catalog API failed: ${response.status}`);
+    }
+
+    const candidates = normalizeOpenCodeProviderCatalog(await response.json());
+    if (!candidates) {
+      throw new Error("OpenCode provider catalog API returned an invalid response");
+    }
+    return candidates;
+  }
+
+  async listAgents(directory: string): Promise<OpenCodeAgentCandidate[]> {
+    const url = new URL(`${this.#baseUrl}/agent`);
+    url.searchParams.set("directory", directory);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: this.#headers,
+    });
+    if (!response.ok) {
+      throw new Error(`OpenCode agent catalog API failed: ${response.status}`);
+    }
+
+    const candidates = normalizeOpenCodeAgentCatalog(await response.json());
+    if (!candidates) {
+      throw new Error("OpenCode agent catalog API returned an invalid response");
+    }
+    return candidates;
   }
 
   async listPermissions(directory: string): Promise<OpenCodePermissionRequest[]> {
@@ -405,6 +472,110 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+export function parseOpenCodeModelRef(value: string): OpenCodeModelSelection | undefined {
+  const ref = value.trim();
+  const separator = ref.indexOf("/");
+  if (separator <= 0 || separator === ref.length - 1) return undefined;
+  return {
+    providerID: ref.slice(0, separator),
+    modelID: ref.slice(separator + 1),
+  };
+}
+
+export function normalizeOpenCodeProviderCatalog(
+  value: unknown,
+): OpenCodeModelCandidate[] | undefined {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.all) ||
+    !Array.isArray(value.connected) ||
+    value.connected.some((providerID) => typeof providerID !== "string")
+  ) {
+    return undefined;
+  }
+
+  const connected = new Set(value.connected as string[]);
+  const candidates: OpenCodeModelCandidate[] = [];
+  const seen = new Set<string>();
+
+  const addCandidate = (
+    providerID: string,
+    providerName: string | undefined,
+    modelID: string,
+    modelName: string | undefined,
+  ) => {
+    const key = `${providerID}\u0000${modelID}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push({
+      providerID,
+      modelID,
+      ...(providerName ? { providerName } : {}),
+      ...(modelName ? { modelName } : {}),
+    });
+  };
+
+  for (const rawProvider of value.all) {
+    if (!isRecord(rawProvider)) continue;
+    const providerID =
+      typeof rawProvider.id === "string" && rawProvider.id ? rawProvider.id : undefined;
+    if (!providerID || !connected.has(providerID)) continue;
+    const providerName =
+      typeof rawProvider.name === "string" && rawProvider.name ? rawProvider.name : undefined;
+    const rawModels = rawProvider.models;
+
+    if (Array.isArray(rawModels)) {
+      for (const rawModel of rawModels) {
+        if (!isRecord(rawModel)) continue;
+        const modelID = typeof rawModel.id === "string" && rawModel.id ? rawModel.id : undefined;
+        if (!modelID) continue;
+        const modelName =
+          typeof rawModel.name === "string" && rawModel.name ? rawModel.name : undefined;
+        addCandidate(providerID, providerName, modelID, modelName);
+      }
+      continue;
+    }
+
+    if (!isRecord(rawModels)) continue;
+    for (const [key, rawModel] of Object.entries(rawModels)) {
+      const modelID =
+        isRecord(rawModel) && typeof rawModel.id === "string" && rawModel.id ? rawModel.id : key;
+      if (!modelID) continue;
+      const modelName =
+        isRecord(rawModel) && typeof rawModel.name === "string" && rawModel.name
+          ? rawModel.name
+          : undefined;
+      addCandidate(providerID, providerName, modelID, modelName);
+    }
+  }
+
+  return candidates;
+}
+
+export function normalizeOpenCodeAgentCatalog(
+  value: unknown,
+): OpenCodeAgentCandidate[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const candidates: OpenCodeAgentCandidate[] = [];
+  const seen = new Set<string>();
+  for (const rawAgent of value) {
+    if (!isRecord(rawAgent)) continue;
+    const name = typeof rawAgent.name === "string" ? rawAgent.name.trim() : "";
+    if (!name || seen.has(name)) continue;
+    if (rawAgent.hidden === true || rawAgent.mode === "subagent") continue;
+    seen.add(name);
+    candidates.push({
+      name,
+      ...(typeof rawAgent.description === "string" && rawAgent.description
+        ? { description: rawAgent.description }
+        : {}),
+      ...(typeof rawAgent.mode === "string" && rawAgent.mode ? { mode: rawAgent.mode } : {}),
+    });
+  }
+  return candidates;
 }
 
 export function normalizeOpenCodePermissionRequest(
