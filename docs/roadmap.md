@@ -47,7 +47,7 @@ Discord never accepts an arbitrary OpenCode URL, hostname, username, or credenti
 
 ## Phase 4 — Durable service operation
 
-Status: **In progress (2026-08-28)**
+Status: **Complete (2026-08-28)**
 
 - Phase 4A / Issue #34: **Complete** — reproducible Nix package plus NixOS/systemd service lifecycle, persistent state, restart/stop smoke validation.
 - Phase 4B / Issue #36: **Complete** — optional dotenv-style secret file from an operator-selected path such as `~/secrets/ocb_secrets.env`, with runtime precedence `process environment > secret file > repository .env` and real-environment fail-closed/leakage validation.
@@ -55,9 +55,14 @@ Status: **In progress (2026-08-28)**
 - Phase 4D / Issue #40: **Complete** — opt-in low-cardinality Prometheus/OpenMetrics scrape endpoint with loopback-only default exposure, host health/readiness gauges, persisted binding gauges, bounded lifecycle counters, and explicit metrics cardinality/privacy boundaries.
 - Phase 4E / Issue #42: **Complete (2026-08-28)** — OpenCode-source-of-truth pending permission recovery after Bridge restart, with exact host/session/directory isolation, race-safe SSE/reconcile publication, stale-button rejection, bounded failure logging, and Adam/Eve real-environment validation.
 - Phase 4F / Issue #45: **Complete (2026-08-28)** — optional systemd `LoadCredential=` secret delivery preserving the application-level `OCB_SECRETS_FILE` contract, with service-user source isolation, credential-copy use, missing-source fail-closed behavior, legacy `secretsFile` compatibility, and Adam real-environment validation.
-- State migration strategy or SQLite if concurrency/lifecycle complexity justifies it.
 
 Phase 4D does not deploy Prometheus, Grafana, alerting, OpenTelemetry collectors, or firewall rules. Those remain deployment/infrastructure concerns outside the Bridge application.
+
+## Future considerations
+
+The current atomic JSON state store remains the supported persistence model. A schema migration framework or SQLite should be introduced only if observed concurrency, lifecycle, query, or migration complexity makes the additional storage layer materially useful; it is not an unfinished Phase 4 requirement.
+
+OpenCode-specific operational limitations are tracked separately as upstream dependencies rather than extending Bridge implementation phases indefinitely. In particular, `/oc abort` hard-kill behavior and long-running `opencode serve` degradation remain tracked in Issues #5 and #44.
 
 ## Separate infrastructure work
 
