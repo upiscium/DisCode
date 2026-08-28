@@ -4,7 +4,7 @@
 
 ### OpenCode Servers
 
-Each configured OpenCode server is the authoritative owner of its sessions, model/tool execution, session state, messages, questions, and permission requests. The bridge must not reimplement these semantics or migrate a session between hosts implicitly.
+Each configured OpenCode server is the authoritative owner of its sessions, model/tool execution, session state, messages, questions, permission requests, and the provider/agent catalogs valid for a project directory. The bridge must not reimplement these semantics or migrate a session between hosts implicitly.
 
 ### tmux
 
@@ -18,14 +18,17 @@ A narrow adapter between Discord and configured OpenCode hosts:
 - resolves a stable operator-configured host ID;
 - maps a Discord thread to `(hostId, OpenCode session)`;
 - validates repository directory scope against that host's allowed roots;
+- enumerates model/agent choices only from the selected host's current OpenCode catalog;
+- persists optional Discord prompt preferences for model/agent selection;
+- revalidates explicit selections at command execution and immediately before Discord-origin prompts;
 - forwards thread text and attachments as OpenCode prompts;
 - projects OpenCode questions, permissions, results, errors, tool summaries, and optional streaming into Discord;
 - aggregates per-host HTTP/SSE readiness for operator diagnostics;
-- persists only the mapping required to reconnect after restart.
+- persists only the mapping and non-secret prompt preference required to reconnect after restart.
 
 ### OpenCode policy/configuration
 
-Remains the execution-policy authority on every host. A Discord authorization grants the human access to the bridge, not blanket authority to bypass OpenCode tool policies.
+Remains the execution-policy authority on every host. A Discord authorization grants the human access to the bridge, not blanket authority to bypass OpenCode tool policies. OpenCode also remains the authority for the model/agent that was actually used: Bridge-side selection is only a prompt preference, while actual reporting is derived from OpenCode message history.
 
 ## Host registry
 
@@ -37,36 +40,49 @@ Each runtime host owns:
 - one global SSE consumer/readiness monitor;
 - one isolated assistant-stream publisher;
 - one isolated tool-summary publisher;
-- one directory authorizer built from that host's allowed roots.
+- one directory authorizer built from that host's allowed roots;
+- one host/project-scoped provider/model and agent catalog surface.
 
 The legacy single-host environment is projected as a registry containing host ID `default`.
 
 ## Primary flow
 
 ```text
-/oc start directory:<absolute> [host:<configured-id>]
+/oc start directory:<absolute> [host:<configured-id>] [model:<provider/model>] [agent:<name>]
   -> validate Discord user/guild
   -> resolve configured host (default if omitted)
   -> ask selected OpenCode host for canonical /path
   -> verify remote directory is accessible through OpenCode file API
   -> verify canonical directory within selected host allowed roots
+  -> if model/agent explicit: query selected host catalog for canonical directory
+  -> reject stale/unavailable explicit selection
   -> selected host: OpenCode session.create
   -> Discord thread.create
-  -> persist thread/host/session binding
+  -> persist thread/host/session binding plus optional prompt preference
+
+/oc model or /oc agent in a bound thread
+  -> resolve exact binding host + canonical directory
+  -> query that OpenCode host's current catalog
+  -> reject stale/unavailable selection
+  -> atomically persist only the requested preference field
+  -> refresh managed header
 
 Discord thread message
   -> validate author
   -> find binding
   -> resolve binding.hostId
   -> reject overlapping turn while that session is busy/retrying
-  -> selected host: OpenCode session.promptAsync
+  -> if explicit preference exists: re-query selected host catalog
+  -> fail closed if model/agent is no longer available
+  -> selected host: OpenCode session.promptAsync with validated model/agent context
 
 Per-host OpenCode global SSE
   -> identify event source host
-  -> question.asked     -> matching host/session binding -> Discord Ask
-  -> permission.updated -> matching host/session/directory binding -> race-safe Discord buttons
-  -> session.idle       -> matching host/session binding -> canonical Result
-  -> session.error      -> matching host/session binding -> Discord error
+  -> message.updated      -> refresh actual model/agent from OpenCode history
+  -> question.asked       -> matching host/session binding -> Discord Ask
+  -> permission.updated  -> matching host/session/directory binding -> race-safe Discord buttons
+  -> session.idle        -> matching host/session binding -> canonical Result
+  -> session.error       -> matching host/session binding -> Discord error
 
 /oc health
   -> snapshot every configured host and its current SSE freshness
@@ -91,13 +107,38 @@ For every configured host, allowed-root authorization uses that OpenCode server 
 4. `GET /file?directory=<canonical>&path=.` confirms that the canonical directory exists and is accessible through OpenCode.
 5. The canonical directory is compared only against the selected host's configured allowed roots.
 
-A path outside those roots, a symlink escape, an inaccessible path, or an invalid OpenCode response fails closed before session creation.
+A path outside those roots, a symlink escape, an inaccessible path, or an invalid OpenCode response fails closed before session creation or selection autocomplete.
+
+## Model / agent selection authority
+
+Discord selection is intentionally constrained to an already-authorized `(hostId, canonical directory)` boundary.
+
+- Model candidates come from the selected OpenCode host's `GET /provider?directory=...` response. Only currently connected providers are exposed.
+- Agent candidates come from the selected host's `GET /agent?directory=...` response. Hidden/subagent-only entries are not offered as primary Discord choices.
+- Discord autocomplete is only a UX hint. It returns at most 25 filtered choices, and a candidate value is never trusted merely because it was previously offered.
+- Canonical model values are represented as `providerID/modelID`. Parsing splits at the first `/` only because a model ID may itself contain `/`.
+- `/oc start`, `/oc model`, and `/oc agent` all revalidate explicit values against the current selected-host catalog before changing Bridge state.
+- Every Discord-origin text or attachment prompt revalidates the persisted explicit preference again immediately before `session.promptAsync`.
+- If the catalog cannot be retrieved, or an explicit model/agent is no longer present, execution fails closed. The Bridge never silently substitutes an OpenCode default for an explicit stale selection.
+- A preference update changes only subsequent Discord-origin prompts. It does not mutate an OpenCode turn that is already running and does not remotely operate the OpenCode TUI picker.
+
+The managed session header and `/oc status` display two distinct concepts:
+
+```text
+Latest actual model / agent
+  = latest OpenCode user-message history
+
+Discord model / agent preference
+  = persisted Bridge binding state for the next Discord-origin prompt
+```
+
+Missing actual history is rendered as `(not observed yet)`. An unset Bridge preference is rendered as `(OpenCode default)`. This separation prevents another OpenCode client's actual execution state from being mistaken for Bridge preference, and vice versa.
 
 ## Failure semantics
 
 Creating a session is a two-system operation. If Discord thread creation or binding persistence fails after the OpenCode session was created, the bridge attempts compensation by deleting the new thread and the session on the same selected host.
 
-For normal operation, the state file is updated atomically by writing a temporary file and renaming it into place.
+For normal operation, the state file is updated atomically by writing a temporary file and renaming it into place. Model and agent preferences are optional independent fields: changing one preserves the other.
 
 An OpenCode event-stream disconnect is isolated to that host. Each gateway reconnects with bounded exponential backoff. Result publication is idempotent at the bridge level using `lastPublishedAssistantMessageId` in persisted state.
 
@@ -121,7 +162,7 @@ The NixOS module gives systemd ownership of Bridge process lifecycle:
 - abnormal Bridge exits are restarted with `Restart=on-failure`;
 - stop/restart sends `SIGTERM`, which enters the Bridge's existing shutdown path;
 - `StateDirectory` provides a persistent writable `/var/lib/<name>` location and the module supplies `STATE_FILE` from that location;
-- a Bridge restart therefore preserves bindings without coupling OpenCode session lifetime to the Bridge process;
+- a Bridge restart therefore preserves bindings and selection preferences without coupling OpenCode session lifetime to the Bridge process;
 - stopping the Bridge does not stop, abort, migrate, or delete OpenCode server sessions.
 
 Runtime non-secret configuration can still be supplied through `Environment=` or a systemd `EnvironmentFile`. Secrets remain an application-level dotenv file selected with `OCB_SECRETS_FILE`. The NixOS module can supply that contract either directly with legacy `secretsFile` or through systemd `LoadCredential=` with `secretsCredentialFile`. The Bridge parser itself is unchanged: it expands `~`/`~/...` when a normal path is supplied and loads the selected file before repository-local `.env`.
@@ -156,7 +197,7 @@ Typical JSON record:
 }
 ```
 
-The stable context policy intentionally favors identifiers over payloads. `host_id`, OpenCode `session_id`, Discord `thread_id`, coarse interaction kind, OpenCode event type, retry timing, normalized `error_type`, and scalar `error_code` may be logged when useful. Arbitrary `Error.message` and stack traces are not emitted. Directory paths, Discord user/guild IDs, prompt/message text, Ask answers, attachment content, raw tool output, raw config objects, and raw Error objects are not part of the normal logging contract.
+The stable context policy intentionally favors identifiers over payloads. `host_id`, OpenCode `session_id`, Discord `thread_id`, coarse interaction kind, OpenCode event type, retry timing, normalized `error_type`, and scalar `error_code` may be logged when useful. Arbitrary `Error.message` and stack traces are not emitted. Directory paths, Discord user/guild IDs, prompt/message text, Ask answers, attachment content, raw tool output, raw config objects, raw provider/agent catalog payloads, and raw Error objects are not part of the normal logging contract.
 
 Fields whose names indicate token/password/authorization/secret/credential data are always redacted. Directory/user/guild and content-like fields are forcibly omitted even if a caller supplies them. In addition, the production logger receives the resolved Discord token, OpenCode host passwords, and derived Basic-auth credential encodings as known secret sentinels and removes those values if they become embedded in logger-authored messages or allowed scalar context. This is defense in depth; callers must still avoid sending sensitive payloads to the logger at all.
 
@@ -176,7 +217,7 @@ The initial metrics contract uses the `opencode_discord_bridge_` prefix and expo
 - per-host health-probe latency histogram;
 - bounded scrape success/error counters.
 
-Metrics labels may contain only operator-configured stable `host_id` values and fixed enumerations such as lifecycle `operation` or scrape `result`. OpenCode `session_id`, Discord `thread_id`, directory paths, Discord user/guild IDs, prompt/Ask/tool/output content, URLs, usernames, credentials, and arbitrary error strings are forbidden as metric labels or metric payload.
+Metrics labels may contain only operator-configured stable `host_id` values and fixed enumerations such as lifecycle `operation` or scrape `result`. OpenCode `session_id`, Discord `thread_id`, directory paths, Discord user/guild IDs, prompt/Ask/tool/output content, model/agent names, provider/model catalog payloads, URLs, usernames, credentials, and arbitrary error strings are forbidden as metric labels or metric payload.
 
 Each `/metrics` scrape performs the same authenticated OpenCode `/global/health` probes used by `/oc health`, in parallel, and combines those results with the same per-host SSE freshness snapshot. The health-probe primitive is side-effect configurable: Discord `/oc health` preserves `opencode.health_degraded` warning emission, while Prometheus scrapes suppress repeated degraded warnings so scrape cadence does not amplify logs.
 
@@ -187,12 +228,12 @@ Metrics collection does not alter OpenCode session/execution/permission state, d
 ## Threat model assumptions
 
 - The Bridge process and configured host registry are trusted operator infrastructure.
-- Discord is an untrusted transport surface; user IDs, guild ID, stable host IDs, and per-host directory roots are explicit allowlists.
+- Discord is an untrusted transport surface; user IDs, guild ID, stable host IDs, per-host directory roots, and OpenCode-derived model/agent candidates are explicit authority boundaries.
 - Remote OpenCode servers are reachable only over a deliberately secured network/transport appropriate to the deployment. Host credentials remain required.
-- A compromised Discord account in `DISCORD_ALLOWED_USER_IDS` can issue prompts and approve one-shot permissions exposed by OpenCode for any host ID made available by the operator. Therefore the Discord account, bot token, host registry, and selected secret-file path are security-critical.
+- A compromised Discord account in `DISCORD_ALLOWED_USER_IDS` can issue prompts, select any model/agent exposed by a configured host for an allowed directory, and approve one-shot permissions exposed by OpenCode for any host ID made available by the operator. Therefore the Discord account, bot token, host registry, and selected secret-file path are security-critical.
 - `Allow always` is disabled unless the operator explicitly opts in.
-- The bridge does not copy arbitrary tool output or environment variables into permission messages or host metadata.
-- The bridge does not accept arbitrary OpenCode URLs or secret-file paths from Discord and does not execute shell/tmux/PID-control operations itself.
+- The bridge does not copy arbitrary tool output, raw provider catalog metadata, or environment variables into permission messages or host metadata.
+- The bridge does not accept arbitrary OpenCode URLs, provider endpoints/configuration/credentials, or secret-file paths from Discord and does not execute shell/tmux/PID-control operations itself.
 - A metrics listener configured on a non-loopback address is an explicit operator exposure decision and must be protected by deployment-level network controls as appropriate.
 
 ## Persistence model
@@ -212,6 +253,11 @@ Metrics collection does not alter OpenCode session/execution/permission state, d
       "title": "Terreate",
       "createdBy": "discord-user-id",
       "createdAt": "2026-08-23T00:00:00.000Z",
+      "model": {
+        "providerID": "openrouter",
+        "modelID": "anthropic/claude-sonnet-4.6"
+      },
+      "agent": "build",
       "lastPublishedAssistantMessageId": "msg_...",
       "headerMessageId": "discord-message-id"
     }
@@ -219,6 +265,8 @@ Metrics collection does not alter OpenCode session/execution/permission state, d
 }
 ```
 
-Legacy schema-v1 bindings without `hostId` are migrated to the configured default host when the state file is loaded, then written back in host-aware form. The schema version remains 1 because this is an additive migration.
+`model` and `agent` are optional Bridge-side prompt preferences. Their absence means subsequent Discord-origin prompts use OpenCode's default behavior. They are not a record of actual execution; actual model/agent reporting is read from OpenCode message history.
 
-No token or password belongs in this file.
+Legacy schema-v1 bindings without `hostId` are migrated to the configured default host when the state file is loaded, then written back in host-aware form. Existing schema-v1 bindings without `model` or `agent` require no migration and continue to mean OpenCode default behavior. The schema version remains 1 because these are additive fields.
+
+No token, password, provider credential, or raw catalog payload belongs in this file.
