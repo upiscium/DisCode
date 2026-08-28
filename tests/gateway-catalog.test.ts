@@ -91,24 +91,20 @@ describe("OpenCode model and agent catalogs", () => {
   });
 
   it("requests model and agent catalogs with the canonical directory and Basic auth", async () => {
-    const fetchMock = vi.fn(
-      async (input: string | URL | Request, _init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/provider?")) {
-          return Response.json({
-            all: [
-              { id: "openrouter", models: { "openai/gpt-5.6": { id: "openai/gpt-5.6" } } },
-            ],
-            connected: ["openrouter"],
-            default: { openrouter: "openai/gpt-5.6" },
-          });
-        }
-        if (url.includes("/agent?")) {
-          return Response.json([{ name: "build", mode: "primary" }]);
-        }
-        return new Response("not found", { status: 404 });
-      },
-    );
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/provider?")) {
+        return Response.json({
+          all: [{ id: "openrouter", models: { "openai/gpt-5.6": { id: "openai/gpt-5.6" } } }],
+          connected: ["openrouter"],
+          default: { openrouter: "openai/gpt-5.6" },
+        });
+      }
+      if (url.includes("/agent?")) {
+        return Response.json([{ name: "build", mode: "primary" }]);
+      }
+      return new Response("not found", { status: 404 });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const gateway = new OpenCodeGateway({
