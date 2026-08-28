@@ -60,11 +60,11 @@ Phase 4D does not deploy Prometheus, Grafana, alerting, OpenTelemetry collectors
 
 ## Phase 5 — Runtime selection UX
 
-Status: **In progress**
+Status: **Complete (2026-08-28)**
 
-- Phase 5A / Issue #48: **Implementation complete; real-environment acceptance pending** — host/directory-scoped OpenCode model and agent autocomplete, optional `/oc start` selection, bound-thread `/oc model` and `/oc agent` preferences, execution-time catalog revalidation, stale-selection fail-closed behavior, restart-persistent binding preferences, text/attachment propagation, and explicit separation of OpenCode-history actual values from Bridge-side Discord preferences in the managed header and `/oc status`.
-- Phase 5A keeps OpenCode as the selection/execution authority: Discord never supplies provider URLs, provider configuration, or credentials, and an explicit stale selection never silently falls back to another model or agent.
-- Phase 5A becomes complete only after Adam/Eve real-environment smoke covers host-scoped autocomplete, model/agent execution, preference changes, restart recovery, stale-selection rejection, cross-host isolation, and leakage checks.
+- Phase 5A / Issue #48: **Complete (2026-08-28)** — host/directory-scoped OpenCode model and agent autocomplete, optional `/oc start` selection, bound-thread `/oc model` and `/oc agent` preferences, execution-time catalog revalidation, stale-selection fail-closed behavior, restart-persistent binding preferences, text/attachment propagation, and explicit separation of OpenCode-history actual values from Bridge-side Discord preferences in the managed header and `/oc status`.
+- OpenCode remains the selection/execution authority: Discord never supplies provider URLs, provider configuration, or credentials, and an explicit stale selection never silently falls back to another model or agent.
+- Adam/Eve real-environment acceptance covered deploy/health, host-scoped autocomplete, explicit model execution, bound-thread model/agent changes, restart recovery, stale persisted-selection rejection, host failure isolation, and Discord/journal/metrics leakage checks.
 
 Model variants / reasoning-effort selection remain a possible Phase 5B only if there is a demonstrated operator need; they are not part of Phase 5A.
 
