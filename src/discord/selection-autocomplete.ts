@@ -73,8 +73,6 @@ function matchesModel(candidate: OpenCodeModelCandidate, query: string): boolean
 function modelChoice(candidate: OpenCodeModelCandidate): SelectionAutocompleteChoice | undefined {
   const value = `${candidate.providerID}/${candidate.modelID}`;
   if (value.length > 100) return undefined;
-  const label = candidate.modelName
-    ? `${candidate.modelName} · ${candidate.providerID}`
-    : value;
+  const label = candidate.modelName ? `${candidate.modelName} · ${candidate.providerID}` : value;
   return { name: label.slice(0, 100), value };
 }
