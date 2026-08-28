@@ -34,9 +34,9 @@ async function fixture(options?: { headerMessageId?: string; existingContent?: s
     content: options?.existingContent ?? "old header",
     edit,
   }));
-  const send = vi.fn(
-    async (_options: { content: string; allowedMentions?: unknown }) => ({ id: "created-header" }),
-  );
+  const send = vi.fn(async (_options: { content: string; allowedMentions?: unknown }) => ({
+    id: "created-header",
+  }));
   const thread = {
     isThread: () => true,
     messages: { fetch: fetchMessage },
