@@ -55,6 +55,8 @@ describe("StateStore", () => {
     await store.load();
 
     expect(store.getByThread("thread-legacy")?.hostId).toBe("lab");
+    expect(store.getByThread("thread-legacy")?.model).toBeUndefined();
+    expect(store.getByThread("thread-legacy")?.agent).toBeUndefined();
     const persisted = JSON.parse(await readFile(path, "utf8"));
     expect(persisted.version).toBe(1);
     expect(persisted.bindings["thread-legacy"].hostId).toBe("lab");
@@ -73,6 +75,52 @@ describe("StateStore", () => {
 
     expect(store.getBySession("local", "session-1")?.threadId).toBe("thread-1");
     expect(store.getBySession("lab", "session-1")?.threadId).toBe("thread-2");
+  });
+
+  it("persists model and agent preferences without changing state version", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const path = join(dir, "state.json");
+    const store = new StateStore(path, "local");
+    await store.load();
+    await store.put(binding);
+    await store.updateSelectionPreference("thread-1", {
+      model: { providerID: "openai", modelID: "gpt-5.6" },
+      agent: "build",
+    });
+
+    const reloaded = new StateStore(path, "local");
+    await reloaded.load();
+    expect(reloaded.getByThread("thread-1")?.model).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.6",
+    });
+    expect(reloaded.getByThread("thread-1")?.agent).toBe("build");
+    expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
+  });
+
+  it("updates model and agent preferences independently", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+    await store.updateSelectionPreference("thread-1", {
+      model: { providerID: "openai", modelID: "gpt-5.6" },
+      agent: "build",
+    });
+
+    await store.updateSelectionPreference("thread-1", {
+      model: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+    });
+    expect(store.getByThread("thread-1")).toMatchObject({
+      model: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+      agent: "build",
+    });
+
+    await store.updateSelectionPreference("thread-1", { agent: "review" });
+    expect(store.getByThread("thread-1")).toMatchObject({
+      model: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+      agent: "review",
+    });
   });
 
   it("tracks the last published assistant message", async () => {

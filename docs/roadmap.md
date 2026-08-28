@@ -58,6 +58,16 @@ Status: **Complete (2026-08-28)**
 
 Phase 4D does not deploy Prometheus, Grafana, alerting, OpenTelemetry collectors, or firewall rules. Those remain deployment/infrastructure concerns outside the Bridge application.
 
+## Phase 5 — Runtime selection UX
+
+Status: **Complete (2026-08-28)**
+
+- Phase 5A / Issue #48: **Complete (2026-08-28)** — host/directory-scoped OpenCode model and agent autocomplete, optional `/oc start` selection, bound-thread `/oc model` and `/oc agent` preferences, execution-time catalog revalidation, stale-selection fail-closed behavior, restart-persistent binding preferences, text/attachment propagation, and explicit separation of OpenCode-history actual values from Bridge-side Discord preferences in the managed header and `/oc status`.
+- OpenCode remains the selection/execution authority: Discord never supplies provider URLs, provider configuration, or credentials, and an explicit stale selection never silently falls back to another model or agent.
+- Adam/Eve real-environment acceptance covered deploy/health, host-scoped autocomplete, explicit model execution, bound-thread model/agent changes, restart recovery, stale persisted-selection rejection, host failure isolation, and Discord/journal/metrics leakage checks.
+
+Model variants / reasoning-effort selection remain a possible Phase 5B only if there is a demonstrated operator need; they are not part of Phase 5A.
+
 ## Future considerations
 
 The current atomic JSON state store remains the supported persistence model. A schema migration framework or SQLite should be introduced only if observed concurrency, lifecycle, query, or migration complexity makes the additional storage layer materially useful; it is not an unfinished Phase 4 requirement.

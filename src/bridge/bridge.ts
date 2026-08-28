@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  type AutocompleteInteraction,
   ButtonBuilder,
   type ButtonInteraction,
   ButtonStyle,
@@ -22,20 +23,23 @@ import { openCodeCommand } from "../discord/commands.js";
 import { chunkDiscordText, renderAssistantResult, sanitizeThreadName } from "../discord/format.js";
 import { renderHealthDiagnostic } from "../discord/health.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
+import { selectionAutocomplete } from "../discord/selection-autocomplete.js";
 import { renderSessionStatus } from "../discord/status.js";
 import type { SessionBinding } from "../domain/session-binding.js";
 import { type LoggerLike, noopLogger } from "../logging/logger.js";
 import { probeOpenCodeHostsHealth } from "../opencode/diagnostics.js";
-import type {
-  OpenCodeEvent,
-  OpenCodePermissionRequest,
-  OpenCodePermissionResponse,
-  OpenCodeQuestionRequest,
+import {
+  type OpenCodeEvent,
+  type OpenCodePermissionRequest,
+  type OpenCodePermissionResponse,
+  type OpenCodeQuestionRequest,
+  parseOpenCodeModelRef,
 } from "../opencode/gateway.js";
 import type {
   OpenCodeHostRuntime,
   OpenCodeHostRuntimeRegistry,
 } from "../opencode/host-runtime-registry.js";
+import { validateOpenCodeSelection } from "../opencode/selection-validation.js";
 import type { StateStore } from "../state/state-store.js";
 import {
   hasPendingPermissionRequest,
@@ -150,6 +154,10 @@ export class Bridge {
       { interaction: interactionKind(interaction) },
       error,
     );
+    if (interaction.isAutocomplete()) {
+      await interaction.respond([]).catch(() => undefined);
+      return;
+    }
     if (!interaction.isRepliable()) return;
     const content = `Bridge error: ${truncate(errorMessage(error), 1600)}`;
     if (interaction.deferred || interaction.replied) {
@@ -175,7 +183,9 @@ export class Bridge {
 
   async #handleInteraction(interaction: Interaction): Promise<void> {
     if (!this.#authorized(interaction.user.id)) {
-      if (interaction.isRepliable()) {
+      if (interaction.isAutocomplete()) {
+        await interaction.respond([]);
+      } else if (interaction.isRepliable()) {
         await interaction.reply({
           content: "This user is not authorized to control OpenCode.",
           flags: MessageFlags.Ephemeral,
@@ -184,7 +194,9 @@ export class Bridge {
       return;
     }
     if (interaction.guildId !== this.#config.discordGuildId) {
-      if (interaction.isRepliable()) {
+      if (interaction.isAutocomplete()) {
+        await interaction.respond([]);
+      } else if (interaction.isRepliable()) {
         await interaction.reply({
           content: "This command is restricted to the configured guild.",
           flags: MessageFlags.Ephemeral,
@@ -201,12 +213,22 @@ export class Bridge {
       await this.#handleQuestionButton(interaction);
       return;
     }
+    if (interaction.isAutocomplete()) {
+      if (interaction.commandName === "oc") await this.#handleAutocomplete(interaction);
+      return;
+    }
     if (!interaction.isChatInputCommand() || interaction.commandName !== "oc") return;
 
     const subcommand = interaction.options.getSubcommand();
     switch (subcommand) {
       case "start":
         await this.#startSession(interaction);
+        break;
+      case "model":
+        await this.#setModel(interaction);
+        break;
+      case "agent":
+        await this.#setAgent(interaction);
         break;
       case "status":
         await this.#status(interaction);
@@ -231,6 +253,50 @@ export class Bridge {
     }
   }
 
+  async #handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+    const subcommand = interaction.options.getSubcommand();
+    const focused = interaction.options.getFocused(true);
+    if (focused.name !== "model" && focused.name !== "agent") {
+      await interaction.respond([]);
+      return;
+    }
+
+    if (subcommand === "start") {
+      const hostId = interaction.options.getString("host")?.trim();
+      const directory = interaction.options.getString("directory") ?? "";
+      const choices = await selectionAutocomplete(this.#hosts, {
+        kind: focused.name,
+        directory,
+        ...(hostId ? { hostId } : {}),
+        query: String(focused.value),
+      });
+      await interaction.respond(choices);
+      return;
+    }
+
+    if (subcommand === "model" || subcommand === "agent") {
+      if (focused.name !== subcommand) {
+        await interaction.respond([]);
+        return;
+      }
+      const binding = this.#state.getByThread(interaction.channelId);
+      if (!binding) {
+        await interaction.respond([]);
+        return;
+      }
+      const choices = await selectionAutocomplete(this.#hosts, {
+        kind: focused.name,
+        directory: binding.directory,
+        hostId: binding.hostId,
+        query: String(focused.value),
+      });
+      await interaction.respond(choices);
+      return;
+    }
+
+    await interaction.respond([]);
+  }
+
   async #startSession(interaction: ChatInputCommandInteraction): Promise<void> {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const requestedHostId = interaction.options.getString("host")?.trim();
@@ -247,6 +313,23 @@ export class Bridge {
 
     const requestedDirectory = interaction.options.getString("directory", true);
     const directory = await runtime.authorizeDirectory(requestedDirectory);
+    const requestedModelRef = interaction.options.getString("model")?.trim();
+    const requestedAgent = interaction.options.getString("agent")?.trim();
+    const model = requestedModelRef ? parseOpenCodeModelRef(requestedModelRef) : undefined;
+    if (requestedModelRef && !model) {
+      await interaction.editReply("Invalid OpenCode model selection.");
+      return;
+    }
+    try {
+      await validateOpenCodeSelection(runtime.gateway, directory, {
+        ...(model ? { model } : {}),
+        ...(requestedAgent ? { agent: requestedAgent } : {}),
+      });
+    } catch (error) {
+      await interaction.editReply(`Selection rejected: ${truncate(errorMessage(error), 1400)}`);
+      return;
+    }
+
     const requestedTitle = interaction.options.getString("title")?.trim();
     const title =
       requestedTitle || directory.split("/").filter(Boolean).at(-1) || "OpenCode session";
@@ -274,6 +357,8 @@ export class Bridge {
         title,
         createdBy: interaction.user.id,
         createdAt: new Date().toISOString(),
+        ...(model ? { model } : {}),
+        ...(requestedAgent ? { agent: requestedAgent } : {}),
       };
       await this.#state.put(binding);
       await this.#sessionHeaders.createInitialHeader(binding, thread);
@@ -334,6 +419,83 @@ export class Bridge {
     }
   }
 
+  async #setModel(interaction: ChatInputCommandInteraction): Promise<void> {
+    const binding = this.#state.getByThread(interaction.channelId);
+    if (!binding) {
+      await interaction.reply({
+        content: "This is not a bound OpenCode thread.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const modelRef = interaction.options.getString("model", true).trim();
+    const model = parseOpenCodeModelRef(modelRef);
+    if (!model) {
+      await interaction.reply({
+        content: "Invalid OpenCode model selection.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const runtime = this.#runtimeFor(binding);
+    try {
+      await validateOpenCodeSelection(runtime.gateway, binding.directory, { model });
+    } catch (error) {
+      await interaction.reply({
+        content: `Selection rejected: ${truncate(errorMessage(error), 1400)}`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    await this.#state.updateSelectionPreference(binding.threadId, { model });
+    await this.#refreshSessionHeader(binding.hostId, binding.sessionId);
+    await interaction.reply({
+      content: `Discord prompt model preference set to \`${escapeInlineCode(modelRef)}\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  async #setAgent(interaction: ChatInputCommandInteraction): Promise<void> {
+    const binding = this.#state.getByThread(interaction.channelId);
+    if (!binding) {
+      await interaction.reply({
+        content: "This is not a bound OpenCode thread.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const agent = interaction.options.getString("agent", true).trim();
+    if (!agent) {
+      await interaction.reply({
+        content: "Invalid OpenCode agent selection.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const runtime = this.#runtimeFor(binding);
+    try {
+      await validateOpenCodeSelection(runtime.gateway, binding.directory, { agent });
+    } catch (error) {
+      await interaction.reply({
+        content: `Selection rejected: ${truncate(errorMessage(error), 1400)}`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    await this.#state.updateSelectionPreference(binding.threadId, { agent });
+    await this.#refreshSessionHeader(binding.hostId, binding.sessionId);
+    await interaction.reply({
+      content: `Discord prompt agent preference set to \`${escapeInlineCode(agent)}\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   async #health(interaction: ChatInputCommandInteraction): Promise<void> {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const defaultHostId = this.#hosts.defaultHost().id;
@@ -360,7 +522,10 @@ export class Bridge {
       return;
     }
     const runtime = this.#runtimeFor(binding);
-    const status = await runtime.gateway.status(binding.directory, binding.sessionId);
+    const [status, headerContext] = await Promise.all([
+      runtime.gateway.status(binding.directory, binding.sessionId),
+      runtime.gateway.sessionHeaderContext(binding.directory, binding.sessionId),
+    ]);
     await interaction.reply({
       content: renderSessionStatus({
         hostId: binding.hostId,
@@ -368,6 +533,10 @@ export class Bridge {
         status: status?.type ?? "idle",
         directory: binding.directory,
         baseUrl: runtime.config.baseUrl,
+        ...(headerContext.model ? { actualModel: headerContext.model } : {}),
+        ...(headerContext.agent ? { actualAgent: headerContext.agent } : {}),
+        ...(binding.model ? { preferenceModel: binding.model } : {}),
+        ...(binding.agent ? { preferenceAgent: binding.agent } : {}),
       }),
       flags: MessageFlags.Ephemeral,
     });
@@ -531,6 +700,11 @@ export class Bridge {
       return;
     }
 
+    const promptContext = await validateOpenCodeSelection(runtime.gateway, binding.directory, {
+      ...(binding.model ? { model: binding.model } : {}),
+      ...(binding.agent ? { agent: binding.agent } : {}),
+    });
+
     if (hasAttachments) {
       try {
         const files = await prepareDiscordAttachments(
@@ -546,13 +720,14 @@ export class Bridge {
           binding.sessionId,
           text,
           files,
+          promptContext,
         );
       } catch (error) {
         await message.reply(`Attachment rejected: ${truncate(errorMessage(error), 1500)}`);
         return;
       }
     } else {
-      await runtime.gateway.promptAsync(binding.directory, binding.sessionId, text);
+      await runtime.gateway.promptAsync(binding.directory, binding.sessionId, text, promptContext);
     }
     await message.react("⏳").catch(() => undefined);
   }
@@ -945,6 +1120,7 @@ function parseQuestionCustomId(
 }
 
 function interactionKind(interaction: Interaction): string {
+  if (interaction.isAutocomplete()) return "autocomplete";
   if (interaction.isChatInputCommand()) return "chat_input";
   if (interaction.isButton()) return "button";
   return "other";

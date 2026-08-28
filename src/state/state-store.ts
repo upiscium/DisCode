@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { SessionBinding } from "../domain/session-binding.js";
+import type { OpenCodeModelSelection, SessionBinding } from "../domain/session-binding.js";
 
 type PersistedSessionBinding = Omit<SessionBinding, "hostId"> & { hostId?: string };
 
@@ -72,6 +72,20 @@ export class StateStore {
 
   async put(binding: SessionBinding): Promise<void> {
     this.#state.bindings[binding.threadId] = { ...binding };
+    await this.#persist();
+  }
+
+  async updateSelectionPreference(
+    threadId: string,
+    preference: { model?: OpenCodeModelSelection; agent?: string },
+  ): Promise<void> {
+    const current = this.#state.bindings[threadId];
+    if (!current) return;
+    this.#state.bindings[threadId] = {
+      ...current,
+      ...(preference.model === undefined ? {} : { model: { ...preference.model } }),
+      ...(preference.agent === undefined ? {} : { agent: preference.agent }),
+    };
     await this.#persist();
   }
 

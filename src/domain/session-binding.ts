@@ -1,3 +1,8 @@
+export type OpenCodeModelSelection = {
+  providerID: string;
+  modelID: string;
+};
+
 export type SessionBinding = {
   threadId: string;
   parentChannelId: string;
@@ -7,6 +12,8 @@ export type SessionBinding = {
   title: string;
   createdBy: string;
   createdAt: string;
+  model?: OpenCodeModelSelection;
+  agent?: string;
   lastPublishedAssistantMessageId?: string;
   headerMessageId?: string;
 };

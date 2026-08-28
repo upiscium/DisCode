@@ -7,14 +7,23 @@ export type SessionHeaderContext = {
     modelID: string;
   };
   agent?: string;
+  preferenceModel?: {
+    providerID: string;
+    modelID: string;
+  };
+  preferenceAgent?: string;
   branch?: string;
 };
 
 export function renderSessionHeader(context: SessionHeaderContext): string {
-  const model = context.model
+  const actualModel = context.model
     ? `${context.model.providerID}/${context.model.modelID}`
-    : "(not selected)";
-  const agent = context.agent || "(not selected)";
+    : "(not observed yet)";
+  const actualAgent = context.agent || "(not observed yet)";
+  const preferenceModel = context.preferenceModel
+    ? `${context.preferenceModel.providerID}/${context.preferenceModel.modelID}`
+    : "(OpenCode default)";
+  const preferenceAgent = context.preferenceAgent || "(OpenCode default)";
   const branch = context.branch || "(none)";
 
   return [
@@ -22,8 +31,10 @@ export function renderSessionHeader(context: SessionHeaderContext): string {
     `Host: \`${inline(context.hostId, 100)}\``,
     `Session: \`${inline(context.sessionId, 200)}\``,
     `Directory: \`${inline(context.directory, 800)}\``,
-    `Model: \`${inline(model, 400)}\``,
-    `Agent: \`${inline(agent, 300)}\``,
+    `Latest actual model: \`${inline(actualModel, 400)}\``,
+    `Latest actual agent: \`${inline(actualAgent, 300)}\``,
+    `Discord model preference: \`${inline(preferenceModel, 400)}\``,
+    `Discord agent preference: \`${inline(preferenceAgent, 300)}\``,
     `Branch: \`${inline(branch, 400)}\``,
     "",
     "Messages posted in this thread are sent to OpenCode.",

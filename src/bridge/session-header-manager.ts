@@ -27,6 +27,8 @@ export class SessionHeaderManager {
         hostId: binding.hostId,
         sessionId: binding.sessionId,
         directory: binding.directory,
+        ...(binding.model ? { preferenceModel: binding.model } : {}),
+        ...(binding.agent ? { preferenceAgent: binding.agent } : {}),
       }),
       allowedMentions: { parse: [] },
     });
@@ -46,6 +48,8 @@ export class SessionHeaderManager {
       sessionId: binding.sessionId,
       directory: binding.directory,
       ...context,
+      ...(binding.model ? { preferenceModel: binding.model } : {}),
+      ...(binding.agent ? { preferenceAgent: binding.agent } : {}),
     });
     const thread = await this.#fetchThread(binding.threadId);
     if (!thread) return;
