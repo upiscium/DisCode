@@ -4,7 +4,11 @@ import { openCodeCommand } from "../src/discord/commands.js";
 type CommandJson = {
   options?: Array<{
     name: string;
-    options?: Array<{ name: string; required?: boolean }>;
+    options?: Array<{
+      name: string;
+      required?: boolean;
+      autocomplete?: boolean;
+    }>;
   }>;
 };
 
@@ -24,5 +28,30 @@ describe("/oc command registration", () => {
 
     expect(host).toBeDefined();
     expect(host?.required).not.toBe(true);
+  });
+
+  it("registers optional model and agent autocomplete on /oc start", () => {
+    const json = openCodeCommand.toJSON() as CommandJson;
+    const start = json.options?.find((option) => option.name === "start");
+    const model = start?.options?.find((option) => option.name === "model");
+    const agent = start?.options?.find((option) => option.name === "agent");
+
+    expect(model).toMatchObject({ required: false, autocomplete: true });
+    expect(agent).toMatchObject({ required: false, autocomplete: true });
+  });
+
+  it("registers bound-thread model and agent selection subcommands", () => {
+    const json = openCodeCommand.toJSON() as CommandJson;
+    const modelCommand = json.options?.find((option) => option.name === "model");
+    const agentCommand = json.options?.find((option) => option.name === "agent");
+
+    expect(modelCommand?.options?.find((option) => option.name === "model")).toMatchObject({
+      required: true,
+      autocomplete: true,
+    });
+    expect(agentCommand?.options?.find((option) => option.name === "agent")).toMatchObject({
+      required: true,
+      autocomplete: true,
+    });
   });
 });
