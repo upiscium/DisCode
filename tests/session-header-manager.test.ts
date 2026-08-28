@@ -15,6 +15,8 @@ const baseBinding = {
   title: "repo",
   createdBy: "user-1",
   createdAt: "2026-08-22T00:00:00.000Z",
+  model: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+  agent: "review",
 };
 
 async function fixture(options?: { headerMessageId?: string; existingContent?: string }) {
@@ -61,7 +63,7 @@ async function fixture(options?: { headerMessageId?: string; existingContent?: s
 }
 
 describe("SessionHeaderManager", () => {
-  it("lazily creates and persists a managed header for legacy bindings", async () => {
+  it("lazily creates and persists a managed header for bindings", async () => {
     const { manager, state, send, fetchMessage } = await fixture();
 
     await manager.refreshSession("local", "session-1");
@@ -69,6 +71,11 @@ describe("SessionHeaderManager", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(fetchMessage).not.toHaveBeenCalled();
     expect(state.getByThread("thread-1")?.headerMessageId).toBe("created-header");
+    expect(send.mock.calls[0]?.[0]?.content).toContain("Latest actual model: `openai/gpt-5.6`");
+    expect(send.mock.calls[0]?.[0]?.content).toContain(
+      "Discord model preference: `openrouter/anthropic/claude-sonnet-4.6`",
+    );
+    expect(send.mock.calls[0]?.[0]?.content).toContain("Discord agent preference: `review`");
   });
 
   it("skips Discord edits when the rendered header is unchanged", async () => {
@@ -78,6 +85,8 @@ describe("SessionHeaderManager", () => {
       directory: "/repo",
       agent: "build",
       model: { providerID: "openai", modelID: "gpt-5.6" },
+      preferenceModel: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+      preferenceAgent: "review",
       branch: "feat/header",
     });
     const { manager, edit } = await fixture({
@@ -101,5 +110,7 @@ describe("SessionHeaderManager", () => {
     expect(edit).toHaveBeenCalledTimes(1);
     expect(edit.mock.calls[0]?.[0]?.content).toContain("Host: `local`");
     expect(edit.mock.calls[0]?.[0]?.content).toContain("Branch: `feat/header`");
+    expect(edit.mock.calls[0]?.[0]?.content).toContain("Latest actual agent: `build`");
+    expect(edit.mock.calls[0]?.[0]?.content).toContain("Discord agent preference: `review`");
   });
 });
