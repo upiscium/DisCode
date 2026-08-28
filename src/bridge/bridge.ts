@@ -451,6 +451,7 @@ export class Bridge {
     }
 
     await this.#state.updateSelectionPreference(binding.threadId, { model });
+    await this.#refreshSessionHeader(binding.hostId, binding.sessionId);
     await interaction.reply({
       content: `Discord prompt model preference set to \`${escapeInlineCode(modelRef)}\`.`,
       flags: MessageFlags.Ephemeral,
@@ -488,6 +489,7 @@ export class Bridge {
     }
 
     await this.#state.updateSelectionPreference(binding.threadId, { agent });
+    await this.#refreshSessionHeader(binding.hostId, binding.sessionId);
     await interaction.reply({
       content: `Discord prompt agent preference set to \`${escapeInlineCode(agent)}\`.`,
       flags: MessageFlags.Ephemeral,
@@ -520,7 +522,10 @@ export class Bridge {
       return;
     }
     const runtime = this.#runtimeFor(binding);
-    const status = await runtime.gateway.status(binding.directory, binding.sessionId);
+    const [status, headerContext] = await Promise.all([
+      runtime.gateway.status(binding.directory, binding.sessionId),
+      runtime.gateway.sessionHeaderContext(binding.directory, binding.sessionId),
+    ]);
     await interaction.reply({
       content: renderSessionStatus({
         hostId: binding.hostId,
@@ -528,6 +533,10 @@ export class Bridge {
         status: status?.type ?? "idle",
         directory: binding.directory,
         baseUrl: runtime.config.baseUrl,
+        ...(headerContext.model ? { actualModel: headerContext.model } : {}),
+        ...(headerContext.agent ? { actualAgent: headerContext.agent } : {}),
+        ...(binding.model ? { preferenceModel: binding.model } : {}),
+        ...(binding.agent ? { preferenceAgent: binding.agent } : {}),
       }),
       flags: MessageFlags.Ephemeral,
     });
