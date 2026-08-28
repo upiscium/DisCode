@@ -4,6 +4,16 @@ export type SessionStatusView = {
   status: "busy" | "retry" | "idle";
   directory: string;
   baseUrl: string;
+  actualModel?: {
+    providerID: string;
+    modelID: string;
+  };
+  actualAgent?: string;
+  preferenceModel?: {
+    providerID: string;
+    modelID: string;
+  };
+  preferenceAgent?: string;
 };
 
 export function shellQuote(value: string): string {
@@ -35,11 +45,23 @@ export function renderSessionStatus(view: SessionStatusView): string {
     "--dir",
     shellQuote(view.directory),
   ].join(" ");
+  const actualModel = view.actualModel
+    ? `${view.actualModel.providerID}/${view.actualModel.modelID}`
+    : "(not observed yet)";
+  const actualAgent = view.actualAgent || "(not observed yet)";
+  const preferenceModel = view.preferenceModel
+    ? `${view.preferenceModel.providerID}/${view.preferenceModel.modelID}`
+    : "(OpenCode default)";
+  const preferenceAgent = view.preferenceAgent || "(OpenCode default)";
 
   return [
     `Host: \`${escapeInlineCode(view.hostId)}\``,
     `Session \`${escapeInlineCode(view.sessionId)}\`: **${view.status}**`,
     `Directory: \`${escapeInlineCode(view.directory)}\``,
+    `Latest actual model: \`${escapeInlineCode(actualModel)}\``,
+    `Latest actual agent: \`${escapeInlineCode(actualAgent)}\``,
+    `Discord model preference: \`${escapeInlineCode(preferenceModel)}\``,
+    `Discord agent preference: \`${escapeInlineCode(preferenceAgent)}\``,
     "TUI attach on the OpenCode host:",
     renderCodeBlock(attachCommand, "sh"),
   ].join("\n");
