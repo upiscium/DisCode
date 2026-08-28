@@ -64,7 +64,7 @@ Discord thread message
 Per-host OpenCode global SSE
   -> identify event source host
   -> question.asked     -> matching host/session binding -> Discord Ask
-  -> permission.updated -> matching host/session binding -> Discord buttons
+  -> permission.updated -> matching host/session/directory binding -> race-safe Discord buttons
   -> session.idle       -> matching host/session binding -> canonical Result
   -> session.error      -> matching host/session binding -> Discord error
 
@@ -103,9 +103,11 @@ An OpenCode event-stream disconnect is isolated to that host. Each gateway recon
 
 Health probing is also isolated per host. `/oc health` probes all configured hosts concurrently; an unreachable or invalid host becomes a degraded entry without suppressing healthy results from other hosts.
 
-Permission messages are de-duplicated in memory by `(hostId, permission ID)`. Pending question state is keyed by `(hostId, sessionId)`. OpenCode remains the source of truth for whether either request is still pending.
+Pending question state is keyed by `(hostId, sessionId)`. Permission publication state is keyed by `(hostId, permission ID)` and reserves an entry before Discord send, so startup reconciliation and live SSE cannot publish the same request concurrently. A failed Discord send rolls that reservation back. OpenCode remains the source of truth for whether either request is still pending.
 
-Pending question requests are queried per host during bridge startup so an Ask that survived a bridge restart can be surfaced again.
+Pending question and permission requests are queried per host during Bridge startup after the per-host SSE consumers start. Permission reconciliation derives only bound directories from persisted state, calls the selected host's authenticated `GET /permission?directory=...`, and surfaces a request only when host ID, session ID, and directory all match one persisted binding. Permission requests themselves are not persisted.
+
+Before a Discord permission button sends a reply, the Bridge queries the selected OpenCode host again and confirms the same request is still pending. A request resolved by another OpenCode client is therefore rejected as stale rather than replayed. Reconciliation failures are isolated and logged as `opencode.permission_reconcile_failed` with bounded `host_id` context only.
 
 If persisted state references a host ID that no longer exists in the registry, startup fails rather than silently rerouting that binding to another server.
 

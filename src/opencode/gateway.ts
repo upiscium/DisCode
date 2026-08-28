@@ -10,6 +10,14 @@ import { type LoggerLike, noopLogger } from "../logging/logger.js";
 
 export type OpenCodePermissionResponse = "once" | "always" | "reject";
 
+export type OpenCodePermissionRequest = {
+  id: string;
+  sessionID: string;
+  type: string;
+  title: string;
+  pattern: string[];
+};
+
 export type OpenCodePromptFile = {
   mime: string;
   filename: string;
@@ -192,6 +200,31 @@ export class OpenCodeGateway {
     return { messageId: latest.info.id, parts: latest.parts };
   }
 
+  async listPermissions(directory: string): Promise<OpenCodePermissionRequest[]> {
+    const url = new URL(`${this.#baseUrl}/permission`);
+    url.searchParams.set("directory", directory);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: this.#headers,
+    });
+    if (!response.ok) {
+      throw new Error(`OpenCode permission list API failed: ${response.status}`);
+    }
+
+    const body: unknown = await response.json();
+    if (!Array.isArray(body)) {
+      throw new Error("OpenCode permission list API returned an invalid response");
+    }
+
+    return body.map((value) => {
+      const request = normalizeOpenCodePermissionRequest(value);
+      if (!request) {
+        throw new Error("OpenCode permission list API returned an invalid permission request");
+      }
+      return request;
+    });
+  }
+
   async replyPermission(
     directory: string,
     sessionId: string,
@@ -372,6 +405,31 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+export function normalizeOpenCodePermissionRequest(
+  value: unknown,
+): OpenCodePermissionRequest | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    typeof value.id !== "string" ||
+    !value.id ||
+    typeof value.sessionID !== "string" ||
+    !value.sessionID ||
+    typeof value.permission !== "string" ||
+    !value.permission ||
+    !Array.isArray(value.patterns) ||
+    value.patterns.some((pattern) => typeof pattern !== "string")
+  ) {
+    return undefined;
+  }
+  return {
+    id: value.id,
+    sessionID: value.sessionID,
+    type: value.permission,
+    title: value.permission,
+    pattern: [...value.patterns],
+  };
 }
 
 export function normalizeBridgeGlobalEvent(event: unknown): BridgeGlobalEvent {
