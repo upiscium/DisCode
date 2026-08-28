@@ -6,22 +6,27 @@ OpenCode servers are the source of truth. Local or remote OpenCode servers keep 
 
 ## Behavior
 
-- `/oc start directory:<absolute-path> [host:<configured-id>] [title]` creates an OpenCode session and a Discord thread.
+- `/oc start directory:<absolute-path> [host:<configured-id>] [model:<provider/model>] [agent:<name>] [title]` creates an OpenCode session and a Discord thread.
   - Omitting `host` uses the configured default host.
   - `host` accepts only stable IDs from the operator-configured host registry; Discord cannot supply an arbitrary URL.
-- Plain text posted by an authorized user in a bound thread is sent with `session.promptAsync()` to that binding's host.
+  - `model` and `agent` are optional autocomplete values derived from the selected host and canonical allowed directory. They are revalidated against the current OpenCode catalog when the command executes.
+- `/oc model model:<provider/model>` changes the bound thread's model preference for subsequent Discord-origin prompts.
+- `/oc agent agent:<name>` changes the bound thread's agent preference for subsequent Discord-origin prompts.
+- Plain text posted by an authorized user in a bound thread is sent with `session.promptAsync()` to that binding's host. If an explicit model or agent preference exists, the Bridge revalidates it against the current selected-host catalog immediately before every prompt; stale selections fail closed rather than silently falling back to OpenCode defaults.
 - `question.asked` events are posted as **Ask** messages. The next authorized thread message answers the pending question through the same host's OpenCode question API.
 - `permission.updated` events are posted as Discord buttons.
   - `Allow once`
   - `Reject`
   - `Allow always` only when explicitly enabled by configuration.
 - `session.idle` publishes the latest completed assistant **Result** to the correct host/thread binding.
-- `/oc status` reports Host ID, session state, directory, and a credential-free attach command for the bound host.
+- `/oc status` reports Host ID, session state, directory, latest actual model/agent from OpenCode message history, the configured Discord prompt preferences, and a credential-free attach command for the bound host.
 - `/oc abort` asks the bound host's OpenCode server to abort the current turn.
 - `/oc close` deletes the bound OpenCode session, removes the binding, and archives the Discord thread.
 - `/oc unbind` removes only the Discord binding and leaves the OpenCode session alive.
 - `/oc health` probes every configured host in parallel and reports aggregate plus per-host HTTP/SSE readiness. Host IDs are shown; URLs and credentials are not.
-- Persisted JSON bindings include `hostId`, allowing the bridge to reconnect each Discord thread to the correct OpenCode host after restart. Legacy state-v1 bindings without `hostId` migrate to the configured default host.
+- Persisted JSON bindings include `hostId` plus optional model/agent prompt preferences, allowing the bridge to reconnect each Discord thread to the correct OpenCode host and preserve Discord selection preferences after restart. Legacy state-v1 bindings without `hostId` or selection fields remain backward compatible.
+
+The managed session header deliberately separates `Latest actual model / agent` from `Discord model / agent preference`. Actual values come only from OpenCode message history. Preferences are Bridge-side instructions for the next Discord-origin prompt. Before any user message has established actual context, the header shows `(not observed yet)`; when no Discord preference is configured it shows `(OpenCode default)`.
 
 For a multi-question Ask, reply with one line per question; for a multi-select question, separate selections with commas. A **Reject Ask** button is also provided. Pending Ask and permission requests are reconciled per host when the bridge restarts. OpenCode remains the source of truth: the Bridge re-queries each bound directory and re-surfaces only requests that are still pending for the exact host/session/directory binding.
 
@@ -29,7 +34,7 @@ Assistant streaming is optional and disabled by default. When `DISCORD_STREAM_AS
 
 Tool-call summaries are also isolated per host so identical OpenCode session IDs on different hosts cannot cross-deliver preview or tool activity state.
 
-Discord attachments can be sent to an idle bound session as OpenCode FileParts. PNG, JPEG, WebP, GIF, PDF, and bounded UTF-8 text-like files are supported. The bridge accepts at most four attachments per message, 10 MiB per attachment, and 20 MiB total. Attachment bytes are fetched only from Discord attachment CDN URLs, validated in memory, converted to data URLs, and never written to the host filesystem. Archives, executables, unsupported binary files, redirects, and invalid media signatures are rejected. A pending Ask remains text-only.
+Discord attachments can be sent to an idle bound session as OpenCode FileParts. PNG, JPEG, WebP, GIF, PDF, and bounded UTF-8 text-like files are supported. The bridge accepts at most four attachments per message, 10 MiB per attachment, and 20 MiB total. Attachment bytes are fetched only from Discord attachment CDN URLs, validated in memory, converted to data URLs, and never written to the host filesystem. Archives, executables, unsupported binary files, redirects, and invalid media signatures are rejected. A pending Ask remains text-only. Explicit model/agent preferences are applied to attachment prompts through the same execution-time revalidation path used for text prompts.
 
 ## Security boundary
 
@@ -41,12 +46,13 @@ Discord is not a remote shell in this design.
 4. Discord text becomes an OpenCode prompt. The bridge does not expose an endpoint that executes arbitrary shell commands directly.
 5. OpenCode remains responsible for tool and shell permissions. Permission requests are surfaced to Discord, but the policy decision still flows through the selected OpenCode host's permission API.
 6. A local OpenCode server should stay on `127.0.0.1`. Remote OpenCode hosts should be reachable only over a deliberately secured network/transport and should still use server authentication.
-7. State contains only thread/session/host metadata. Discord and OpenCode credentials are never persisted in the state file.
+7. State contains only thread/session/host metadata plus non-secret model/agent prompt preferences. Discord and OpenCode credentials are never persisted in the state file.
 8. Host-registry passwords are referenced with `passwordEnv`; password values are not embedded in `OPENCODE_HOSTS_JSON` or exposed through registry serialization.
 9. A configured secret-file path is operator-controlled configuration. Discord cannot select or change it.
 10. Structured logs use stable identifiers rather than message payloads. Prompt text, Ask answers, tool output, attachment content, directory paths, and Discord user/guild IDs are not part of the normal log context, while credential-like fields and known secret values are redacted.
 11. Pending permissions are never reconstructed from Discord history or persisted as Bridge authority. Startup reconciliation and permission-button handling both consult the selected OpenCode host, and stale/resolved requests are rejected instead of replayed.
 12. Metrics are disabled by default and use a stricter low-cardinality policy than logs: session/thread IDs, paths, user/guild IDs, message content, URLs, usernames, and credentials are not metric labels or payload.
+13. Discord cannot provide provider endpoints, provider configuration, or provider credentials. Model/agent autocomplete is populated only from the selected host's current OpenCode catalog after directory authorization, and every explicit selection is revalidated against that same host and canonical directory at command execution and again immediately before prompt execution. A stale explicit selection never falls back silently to another model or agent.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
@@ -66,6 +72,7 @@ Each configured host:
   - has its own global SSE consumer/readiness monitor
   - has isolated assistant-stream/tool-summary state
   - applies its own allowed-root policy
+  - supplies its own model/agent catalog for Discord selection
 
 Optional TUI clients attach directly to the same OpenCode session on the
 appropriate host. The Bridge never uses tmux send-keys or terminal scraping.
@@ -259,19 +266,30 @@ npm start
 
 ### 5. Create Discord/OpenCode sessions
 
-Use the default host:
+Use the default host and OpenCode defaults:
 
 ```text
 /oc start directory:/home/upiscium/Documents/Programs/Terreate title:Terreate
 ```
 
-Or explicitly select a configured host:
+Or explicitly select a configured host plus a model/agent offered by autocomplete:
 
 ```text
-/oc start directory:/srv/projects/Terreate host:lab title:Terreate-lab
+/oc start directory:/srv/projects/Terreate host:lab model:openrouter/anthropic/claude-sonnet-4.6 agent:build title:Terreate-lab
 ```
 
-The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, attachments, Ask/permission replies, lifecycle commands, Results, and managed-header updates are routed only to that host.
+The model value is canonical `providerID/modelID`; only the first `/` separates provider ID from model ID, so model IDs may themselves contain `/`. Autocomplete is advisory rather than authority: the selected model/agent is revalidated against the current selected-host catalog when `/oc start` executes.
+
+After a thread is bound, change preferences with:
+
+```text
+/oc model model:openrouter/openai/gpt-5.6
+/oc agent agent:review
+```
+
+These commands do not mutate an already-running OpenCode turn. They persist the next-Discord-prompt preference and refresh the managed header. Each subsequent Discord-origin prompt revalidates the stored preference immediately before it is sent. If the selected model/agent has disappeared from the host catalog, the prompt is rejected instead of falling back silently.
+
+The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, attachments, Ask/permission replies, lifecycle commands, Results, selection preferences, and managed-header updates are routed only to that host.
 
 ## NixOS service operation
 
@@ -322,7 +340,7 @@ By default the module creates an `opencode-discord-bridge` system user/group, st
 
 ## Opening the same session in TUI
 
-`/oc status` shows the bound Host ID and a credential-free `opencode attach` command using that host's configured base URL, session ID, and directory. Authentication is still supplied by the operator environment; credentials are never printed into Discord.
+`/oc status` shows the bound Host ID, latest actual model/agent observed in OpenCode message history, the Discord prompt preferences, and a credential-free `opencode attach` command using that host's configured base URL, session ID, and directory. Authentication is still supplied by the operator environment; credentials are never printed into Discord.
 
 For the local helper-managed host, you can also use:
 
@@ -334,7 +352,7 @@ For the local helper-managed host, you can also use:
 tmux -L opencode-bridge attach -t opencode
 ```
 
-This opens the same OpenCode session Discord is controlling, not a second session.
+This opens the same OpenCode session Discord is controlling, not a second session. A model/agent change made by another OpenCode client is therefore visible as actual history without rewriting the Bridge's separate Discord preference.
 
 ## Development gates
 
