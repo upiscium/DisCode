@@ -124,7 +124,7 @@ The NixOS module gives systemd ownership of Bridge process lifecycle:
 - a Bridge restart therefore preserves bindings without coupling OpenCode session lifetime to the Bridge process;
 - stopping the Bridge does not stop, abort, migrate, or delete OpenCode server sessions.
 
-Runtime non-secret configuration can still be supplied through `Environment=` or a systemd `EnvironmentFile`. Secrets can instead be separated into an optional dotenv-style file selected with `OCB_SECRETS_FILE` or the NixOS module's `secretsFile` option. The Bridge expands `~`/`~/...` against the runtime user's home, accepts ordinary absolute or relative filesystem paths, and loads the file before repository-local `.env`.
+Runtime non-secret configuration can still be supplied through `Environment=` or a systemd `EnvironmentFile`. Secrets remain an application-level dotenv file selected with `OCB_SECRETS_FILE`. The NixOS module can supply that contract either directly with legacy `secretsFile` or through systemd `LoadCredential=` with `secretsCredentialFile`. The Bridge parser itself is unchanged: it expands `~`/`~/...` when a normal path is supplied and loads the selected file before repository-local `.env`.
 
 Configuration precedence is intentionally fixed as:
 
@@ -134,7 +134,9 @@ process/systemd environment
   > repository .env
 ```
 
-The NixOS module only places the secret-file path in the service environment; Nix never reads or serializes the file content. A configured Nix-store-backed `secretsFile` is rejected. The service user must have filesystem permission to read the selected file. Missing, unreadable, or malformed configured secret files fail startup without including secret contents in the error.
+In legacy `secretsFile` mode the NixOS module places only the selected path in the service environment; Nix never reads or serializes the file content, Nix-store-backed paths are rejected, and the service user must be able to read the source directly.
+
+In `secretsCredentialFile` mode the source must be an absolute non-store path. systemd loads it as credential `ocb-secrets.env` and exposes the private runtime copy under `%d/ocb-secrets.env`; the module sets `OCB_SECRETS_FILE` to that credential-directory path. The source may therefore remain unreadable by the Bridge service user outside systemd's credential handoff. `secretsFile` and `secretsCredentialFile` are mutually exclusive so there is exactly one file authority. Missing or unreadable credential sources prevent the unit from starting, while malformed credential content still fails in the unchanged Bridge parser without exposing secret values.
 
 ## Structured logging / observability boundary
 
