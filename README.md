@@ -46,7 +46,7 @@ Discord is not a remote shell in this design.
 9. A configured secret-file path is operator-controlled configuration. Discord cannot select or change it.
 10. Structured logs use stable identifiers rather than message payloads. Prompt text, Ask answers, tool output, attachment content, directory paths, and Discord user/guild IDs are not part of the normal log context, while credential-like fields and known secret values are redacted.
 11. Pending permissions are never reconstructed from Discord history or persisted as Bridge authority. Startup reconciliation and permission-button handling both consult the selected OpenCode host, and stale/resolved requests are rejected instead of replayed.
-11. Metrics are disabled by default and use a stricter low-cardinality policy than logs: session/thread IDs, paths, user/guild IDs, message content, URLs, usernames, and credentials are not metric labels or payload.
+12. Metrics are disabled by default and use a stricter low-cardinality policy than logs: session/thread IDs, paths, user/guild IDs, message content, URLs, usernames, and credentials are not metric labels or payload.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
@@ -275,7 +275,7 @@ The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, 
 
 ## NixOS service operation
 
-The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, to keep secrets in `~/secrets/ocb_secrets.env` owned by an existing user and explicitly enable loopback metrics:
+The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, to let systemd copy a root/operator-owned dotenv secret into the service credential directory while explicitly enabling loopback metrics:
 
 ```nix
 {
@@ -292,7 +292,7 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
             user = "upiscium";
             group = "users";
             createUser = false;
-            secretsFile = "~/secrets/ocb_secrets.env";
+            secretsCredentialFile = "/run/secrets/opencode-discord-bridge.env";
             environmentFile = "/run/opencode-discord-bridge.env";
             logLevel = "info";
             logFormat = "json";
@@ -310,15 +310,15 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
 }
 ```
 
-`secretsFile` is only a path string. Nix never reads the selected file and the module rejects paths that already point into the Nix store. `~/...` is expanded at runtime using the configured service user's home; with the default dedicated system user, use a path readable by that user (typically an absolute path). The service user must have filesystem permission to read the file.
+`secretsCredentialFile` is an absolute source path used only by systemd `LoadCredential=`. Nix never reads the source content and rejects sources already inside the Nix store. systemd exposes the runtime copy as `ocb-secrets.env` inside its private credential directory, while the module sets `OCB_SECRETS_FILE=%d/ocb-secrets.env`. The Bridge therefore keeps the same application-level secret-file contract without requiring the service user to have direct read permission on the source file.
 
-`environmentFile` and `environment` remain available for non-secret or legacy configuration. `STATE_FILE` is controlled by the module and placed under `/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed `environmentFile` paths as well.
+Legacy `secretsFile` remains supported and backward compatible. It passes the selected path directly as `OCB_SECRETS_FILE`, so that file must remain readable by the configured service user; `~/...` is expanded by the Bridge at runtime. `secretsFile` and `secretsCredentialFile` are mutually exclusive and conflicting configuration fails during Nix evaluation.
+
+`environmentFile` and `environment` remain available for non-secret or legacy configuration. `STATE_FILE` is controlled by the module and placed under `/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed `environmentFile`, `secretsFile`, and `secretsCredentialFile` paths. The credential source path is visible in systemd unit metadata, so operators should not encode secret values into filenames.
 
 The NixOS module defaults to `logLevel = "info"`, `logFormat = "json"`, and `metrics.enable = false`. If metrics are enabled, their defaults remain `address = "127.0.0.1"` and `port = 9464`; the module does not add the port to `networking.firewall.allowedTCPPorts`.
 
-By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session.
-
-A future systemd `LoadCredential=` layer may copy/isolate the selected secret source further; the application-level variable contract does not depend on a specific secret backend.
+By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session. `LoadCredential=` is optional deployment hardening; agenix or sops-nix may provide the source path without becoming Bridge dependencies.
 
 ## Opening the same session in TUI
 
