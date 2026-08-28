@@ -54,8 +54,8 @@ describe("validateOpenCodeSelection", () => {
   it("fails closed instead of silently falling back when an agent becomes stale", async () => {
     const api = gateway({ agents: [{ name: "build" }] });
 
-    await expect(
-      validateOpenCodeSelection(api, "/repo", { agent: "review" }),
-    ).rejects.toThrow(/agent is no longer available/);
+    await expect(validateOpenCodeSelection(api, "/repo", { agent: "review" })).rejects.toThrow(
+      /agent is no longer available/,
+    );
   });
 });
