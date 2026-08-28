@@ -98,6 +98,31 @@ describe("StateStore", () => {
     expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
   });
 
+  it("updates model and agent preferences independently", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+    await store.updateSelectionPreference("thread-1", {
+      model: { providerID: "openai", modelID: "gpt-5.6" },
+      agent: "build",
+    });
+
+    await store.updateSelectionPreference("thread-1", {
+      model: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+    });
+    expect(store.getByThread("thread-1")).toMatchObject({
+      model: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+      agent: "build",
+    });
+
+    await store.updateSelectionPreference("thread-1", { agent: "review" });
+    expect(store.getByThread("thread-1")).toMatchObject({
+      model: { providerID: "openrouter", modelID: "anthropic/claude-sonnet-4.6" },
+      agent: "review",
+    });
+  });
+
   it("tracks the last published assistant message", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
     const store = new StateStore(join(dir, "state.json"), "local");
