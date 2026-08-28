@@ -1,8 +1,4 @@
-import type {
-  OpenCodeGateway,
-  OpenCodeModelSelection,
-  OpenCodePromptContext,
-} from "./gateway.js";
+import type { OpenCodeGateway, OpenCodeModelSelection, OpenCodePromptContext } from "./gateway.js";
 
 export type OpenCodeSelectionPreference = {
   model?: OpenCodeModelSelection;
