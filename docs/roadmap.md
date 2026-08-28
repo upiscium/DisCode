@@ -53,7 +53,7 @@ Status: **In progress (2026-08-28)**
 - Phase 4B / Issue #36: **Complete** — optional dotenv-style secret file from an operator-selected path such as `~/secrets/ocb_secrets.env`, with runtime precedence `process environment > secret file > repository .env` and real-environment fail-closed/leakage validation.
 - Phase 4C / Issue #38: **Complete** — structured JSON logging foundation with stable event names, host/session/thread context, log-level filtering, explicit privacy/redaction boundaries, and Adam real-environment smoke validation.
 - Phase 4D / Issue #40: **Complete** — opt-in low-cardinality Prometheus/OpenMetrics scrape endpoint with loopback-only default exposure, host health/readiness gauges, persisted binding gauges, bounded lifecycle counters, and explicit metrics cardinality/privacy boundaries.
-- Phase 4E / Issue #42: **In progress** — recover OpenCode-source-of-truth pending permission requests after Bridge restart, with exact host/session/directory isolation, race-safe SSE/reconcile publication, stale-button checks, and bounded failure logging.
+- Phase 4E / Issue #42: **Complete (2026-08-28)** — OpenCode-source-of-truth pending permission recovery after Bridge restart, with exact host/session/directory isolation, race-safe SSE/reconcile publication, stale-button rejection, bounded failure logging, and Adam/Eve real-environment validation.
 - Optional systemd `LoadCredential=` copy/isolation can be added later without changing the application secret-variable contract.
 - State migration strategy or SQLite if concurrency/lifecycle complexity justifies it.
 
