@@ -4,6 +4,7 @@
 let
   cfg = config.services.opencode-discord-bridge;
   statePath = "/var/lib/${cfg.stateDirectory}/${cfg.stateFile}";
+  credentialName = "ocb-secrets.env";
   serviceEnvironment = cfg.environment // {
     OCB_LOG_LEVEL = cfg.logLevel;
     OCB_LOG_FORMAT = cfg.logFormat;
@@ -12,6 +13,8 @@ let
     OCB_METRICS_PORT = builtins.toString cfg.metrics.port;
   } // lib.optionalAttrs (cfg.secretsFile != null) {
     OCB_SECRETS_FILE = cfg.secretsFile;
+  } // lib.optionalAttrs (cfg.secretsCredentialFile != null) {
+    OCB_SECRETS_FILE = "%d/${credentialName}";
   };
 in
 {
@@ -49,8 +52,8 @@ in
       example = "/run/opencode-discord-bridge.env";
       description = ''
         Runtime systemd EnvironmentFile containing Bridge configuration. Keep secrets in
-        secretsFile when possible. STATE_FILE is controlled by this module and does not
-        need to be present in the environment file.
+        secretsFile or secretsCredentialFile when possible. STATE_FILE is controlled by
+        this module and does not need to be present in the environment file.
       '';
     };
 
@@ -62,6 +65,20 @@ in
         Optional dotenv-style file containing Bridge secrets. The path is passed to the
         runtime as OCB_SECRETS_FILE; the file content is never read by Nix. '~/' is
         expanded by the Bridge using the service user's home directory at runtime.
+        This option is mutually exclusive with secretsCredentialFile.
+      '';
+    };
+
+    secretsCredentialFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/secrets/opencode-discord-bridge.env";
+      description = ''
+        Optional absolute source path for systemd LoadCredential. systemd copies the
+        dotenv-style source into the service's private credential directory as
+        ocb-secrets.env, and the Bridge reads that runtime copy through OCB_SECRETS_FILE.
+        Nix never reads the source content. This option is mutually exclusive with
+        secretsFile.
       '';
     };
 
@@ -142,6 +159,22 @@ in
           || !lib.hasPrefix builtins.storeDir cfg.secretsFile;
         message = "services.opencode-discord-bridge.secretsFile must point outside the Nix store";
       }
+      {
+        assertion =
+          cfg.secretsCredentialFile == null
+          || !lib.hasPrefix builtins.storeDir cfg.secretsCredentialFile;
+        message = "services.opencode-discord-bridge.secretsCredentialFile must point outside the Nix store";
+      }
+      {
+        assertion =
+          cfg.secretsCredentialFile == null
+          || lib.hasPrefix "/" cfg.secretsCredentialFile;
+        message = "services.opencode-discord-bridge.secretsCredentialFile must be an absolute path";
+      }
+      {
+        assertion = !(cfg.secretsFile != null && cfg.secretsCredentialFile != null);
+        message = "services.opencode-discord-bridge.secretsFile and secretsCredentialFile are mutually exclusive";
+      }
     ];
 
     users.groups = lib.mkIf cfg.createUser {
@@ -178,6 +211,8 @@ in
         TimeoutStopSec = "30s";
       } // lib.optionalAttrs (cfg.environmentFile != null) {
         EnvironmentFile = cfg.environmentFile;
+      } // lib.optionalAttrs (cfg.secretsCredentialFile != null) {
+        LoadCredential = [ "${credentialName}:${cfg.secretsCredentialFile}" ];
       };
     };
   };
