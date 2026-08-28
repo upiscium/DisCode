@@ -25,10 +25,15 @@ function runtime(options: {
 }
 
 function registry(hosts: Record<string, ReturnType<typeof runtime>>, defaultHostId = "adam") {
+  const requireHost = (hostId: string) => {
+    const host = hosts[hostId];
+    if (!host) throw new Error(`Missing test host: ${hostId}`);
+    return host;
+  };
   return {
     has: (hostId: string) => hostId in hosts,
-    get: (hostId: string) => hosts[hostId]!,
-    defaultHost: () => hosts[defaultHostId]!,
+    get: requireHost,
+    defaultHost: () => requireHost(defaultHostId),
   };
 }
 
@@ -90,9 +95,9 @@ describe("selectionAutocomplete", () => {
     });
     const hosts = registry({ adam });
 
-    await expect(
-      selectionAutocomplete(hosts, { kind: "model", directory: "" }),
-    ).resolves.toEqual([]);
+    await expect(selectionAutocomplete(hosts, { kind: "model", directory: "" })).resolves.toEqual(
+      [],
+    );
     await expect(
       selectionAutocomplete(hosts, { kind: "model", directory: "/repo", hostId: "missing" }),
     ).resolves.toEqual([]);
@@ -140,9 +145,7 @@ describe("selectionAutocomplete", () => {
         directory: "/repo",
         query: "gpt",
       }),
-    ).resolves.toEqual([
-      { name: "GPT 5.6 · openrouter", value: "openrouter/openai/gpt-5.6" },
-    ]);
+    ).resolves.toEqual([{ name: "GPT 5.6 · openrouter", value: "openrouter/openai/gpt-5.6" }]);
   });
 
   it("fails closed when catalog retrieval fails and excludes overlong Discord values", async () => {
