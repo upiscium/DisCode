@@ -73,6 +73,22 @@
             ];
           };
           service = testSystem.config.systemd.services.opencode-discord-bridge;
+          credentialSource = "/run/secrets/opencode-discord-bridge.env";
+          credentialSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  secretsCredentialFile = credentialSource;
+                };
+              }
+            ];
+          };
+          credentialService = credentialSystem.config.systemd.services.opencode-discord-bridge;
           defaultMetricsSystem = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = [
@@ -87,6 +103,52 @@
             ];
           };
           defaultMetricsService = defaultMetricsSystem.config.systemd.services.opencode-discord-bridge;
+          conflictSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  secretsFile = "/run/legacy-secrets.env";
+                  secretsCredentialFile = credentialSource;
+                };
+              }
+            ];
+          };
+          storeCredentialSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  secretsCredentialFile = "${package}/ocb-secrets.env";
+                };
+              }
+            ];
+          };
+          relativeCredentialSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  secretsCredentialFile = "relative/ocb-secrets.env";
+                };
+              }
+            ];
+          };
+          conflictEval = builtins.tryEval conflictSystem.config.system.build.toplevel;
+          storeCredentialEval = builtins.tryEval storeCredentialSystem.config.system.build.toplevel;
+          relativeCredentialEval = builtins.tryEval relativeCredentialSystem.config.system.build.toplevel;
           moduleEvalCheck =
             assert service.serviceConfig.Restart == "on-failure";
             assert service.serviceConfig.StateDirectory == "opencode-discord-bridge-test";
@@ -98,6 +160,14 @@
             assert service.environment.OCB_METRICS_HOST == "127.0.0.1";
             assert service.environment.OCB_METRICS_PORT == "19464";
             assert !(builtins.elem 19464 testSystem.config.networking.firewall.allowedTCPPorts);
+            assert credentialService.serviceConfig.LoadCredential == [ "ocb-secrets.env:${credentialSource}" ];
+            assert credentialService.environment.OCB_SECRETS_FILE == "%d/ocb-secrets.env";
+            assert credentialService.environment.OCB_SECRETS_FILE != credentialSource;
+            assert !nixpkgs.lib.hasInfix credentialSource credentialService.serviceConfig.ExecStart;
+            assert !(defaultMetricsService.serviceConfig ? LoadCredential) || defaultMetricsService.serviceConfig.LoadCredential == [ ];
+            assert !conflictEval.success;
+            assert !storeCredentialEval.success;
+            assert !relativeCredentialEval.success;
             assert defaultMetricsService.environment.OCB_METRICS_ENABLED == "false";
             assert defaultMetricsService.environment.OCB_METRICS_HOST == "127.0.0.1";
             assert defaultMetricsService.environment.OCB_METRICS_PORT == "9464";
