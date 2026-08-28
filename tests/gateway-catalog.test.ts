@@ -133,7 +133,10 @@ describe("OpenCode model and agent catalogs", () => {
   });
 
   it("fails closed on malformed runtime catalog responses", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ all: [], connected: [42] })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ all: [], connected: [42] })),
+    );
     const gateway = new OpenCodeGateway({
       baseUrl: "http://127.0.0.1:4096",
       username: "opencode",
