@@ -4,6 +4,7 @@ import { AssistantStreamingPublisher } from "./bridge/assistant-streaming-publis
 import { Bridge } from "./bridge/bridge.js";
 import { ToolSummaryPublisher } from "./bridge/tool-summary-publisher.js";
 import { loadConfig } from "./config.js";
+import { selectionAutocomplete } from "./discord/selection-autocomplete.js";
 import { DirectoryPolicy } from "./domain/directory-policy.js";
 import type { OpenCodeHostConfig } from "./domain/host-registry.js";
 import { Logger } from "./logging/logger.js";
@@ -117,7 +118,31 @@ process.on("unhandledRejection", (error) => {
 });
 
 await metricsServer.start();
+void warmPersistedSelectionCatalogs();
 await bridge.start();
+
+async function warmPersistedSelectionCatalogs(): Promise<void> {
+  const seen = new Set<string>();
+  const requests: Array<Promise<unknown>> = [];
+
+  for (const binding of state.list()) {
+    const key = JSON.stringify([binding.hostId, binding.directory]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    for (const kind of ["model", "agent"] as const) {
+      requests.push(
+        selectionAutocomplete(hosts, {
+          kind,
+          directory: binding.directory,
+          hostId: binding.hostId,
+        }),
+      );
+    }
+  }
+
+  await Promise.allSettled(requests);
+}
 
 function lazyDirectoryAuthorizer(host: OpenCodeHostConfig): (directory: string) => Promise<string> {
   let policyPromise: Promise<DirectoryPolicy> | undefined;
