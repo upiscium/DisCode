@@ -38,7 +38,7 @@ type CacheEntry = {
   catalog: CachedSelectionCatalog;
 };
 
-const DEFAULT_CACHE_TTL_MS = 3_000;
+const DEFAULT_CACHE_TTL_MS = 60_000;
 const DEFAULT_CACHE_MAX_ENTRIES = 128;
 const defaultCaches = new WeakMap<SelectionHostRegistry, SelectionAutocompleteCatalogCache>();
 
