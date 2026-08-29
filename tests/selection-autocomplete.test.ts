@@ -210,7 +210,9 @@ describe("selectionAutocomplete", () => {
   });
 
   it("coalesces concurrent identical catalog requests", async () => {
-    let resolveModels: ((models: Array<{ providerID: string; modelID: string }>) => void) | undefined;
+    let resolveModels:
+      | ((models: Array<{ providerID: string; modelID: string }>) => void)
+      | undefined;
     const pending = new Promise<Array<{ providerID: string; modelID: string }>>((resolve) => {
       resolveModels = resolve;
     });
@@ -278,9 +280,7 @@ describe("selectionAutocomplete", () => {
 
     await expect(
       selectionAutocomplete(hosts, { kind: "model", directory: "/repo" }, cache),
-    ).resolves.toEqual([
-      { name: "openrouter/openai/gpt-5.6", value: "openrouter/openai/gpt-5.6" },
-    ]);
+    ).resolves.toEqual([{ name: "openrouter/openai/gpt-5.6", value: "openrouter/openai/gpt-5.6" }]);
 
     adam.gateway.listModels.mockResolvedValueOnce([]);
     await expect(
