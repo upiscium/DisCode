@@ -5,7 +5,7 @@ import { normalizeOpenCodeTodoUpdated } from "../opencode/todo-gateway.js";
 import type { StateStore } from "../state/state-store.js";
 import type { TodoPanelManager } from "./todo-panel-manager.js";
 
-type TodoPanels = Pick<TodoPanelManager, "refreshSession" | "runExclusive" | "updateFromEvent">;
+type TodoPanels = Pick<TodoPanelManager, "refreshBinding" | "runExclusive" | "updateFromEvent">;
 
 export class TodoRuntime {
   readonly #state: StateStore;
@@ -28,11 +28,9 @@ export class TodoRuntime {
       return;
     }
 
-    await this.#panels.refreshSession(binding.hostId, binding.sessionId);
-    await interaction.reply({
-      content: "TODO panel refreshed from current OpenCode state.",
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.#panels.refreshBinding(binding);
+    await interaction.editReply("TODO panel refreshed from current OpenCode state.");
   }
 
   async applyEvent(hostId: string, directory: string, properties: unknown): Promise<void> {
@@ -64,7 +62,7 @@ export class TodoRuntime {
 
   async #refreshBounded(binding: SessionBinding, trigger: string): Promise<void> {
     try {
-      await this.#panels.refreshSession(binding.hostId, binding.sessionId);
+      await this.#panels.refreshBinding(binding);
     } catch (error) {
       this.#logger.warn(
         "discord.todo_panel_failed",

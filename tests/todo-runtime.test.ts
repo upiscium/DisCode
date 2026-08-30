@@ -1,6 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MessageFlags } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TodoRuntime } from "../src/bridge/todo-runtime.js";
 import { StateStore } from "../src/state/state-store.js";
@@ -28,7 +29,7 @@ const remoteBinding = {
 describe("TodoRuntime", () => {
   let state: StateStore;
   let panels: {
-    refreshSession: ReturnType<typeof vi.fn>;
+    refreshBinding: ReturnType<typeof vi.fn>;
     runExclusive: ReturnType<typeof vi.fn>;
     updateFromEvent: ReturnType<typeof vi.fn>;
   };
@@ -45,7 +46,7 @@ describe("TodoRuntime", () => {
     state = new StateStore(join(dir, "state.json"), "local");
     await state.load();
     panels = {
-      refreshSession: vi.fn(async () => undefined),
+      refreshBinding: vi.fn(async () => undefined),
       runExclusive: vi.fn(async (_threadId: string, operation: () => Promise<unknown>) =>
         operation(),
       ),
@@ -58,17 +59,29 @@ describe("TodoRuntime", () => {
   it("refreshes current OpenCode state for the command's bound thread only", async () => {
     await state.put(localBinding);
     const reply = vi.fn(async () => undefined);
+    const deferReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
     const options = { getString: vi.fn(() => "attacker-override") };
 
-    await runtime.handleCommand({ channelId: localBinding.threadId, reply, options } as never);
+    await runtime.handleCommand({
+      channelId: localBinding.threadId,
+      reply,
+      deferReply,
+      editReply,
+      options,
+    } as never);
 
-    expect(panels.refreshSession).toHaveBeenCalledWith("local", "session-local");
-    expect(options.getString).not.toHaveBeenCalled();
-    expect(reply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: "TODO panel refreshed from current OpenCode state.",
-      }),
+    expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+    expect(panels.refreshBinding).toHaveBeenCalledWith(localBinding);
+    expect(editReply).toHaveBeenCalledWith("TODO panel refreshed from current OpenCode state.");
+    expect(deferReply.mock.invocationCallOrder[0]).toBeLessThan(
+      panels.refreshBinding.mock.invocationCallOrder[0] ?? 0,
     );
+    expect(panels.refreshBinding.mock.invocationCallOrder[0]).toBeLessThan(
+      editReply.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(reply).not.toHaveBeenCalled();
+    expect(options.getString).not.toHaveBeenCalled();
   });
 
   it("rejects /oc todo outside a bound thread", async () => {
@@ -76,10 +89,32 @@ describe("TodoRuntime", () => {
 
     await runtime.handleCommand({ channelId: "unbound", reply } as never);
 
-    expect(panels.refreshSession).not.toHaveBeenCalled();
+    expect(panels.refreshBinding).not.toHaveBeenCalled();
     expect(reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: "This is not a bound OpenCode thread." }),
     );
+  });
+
+  it("leaves a failed bound refresh in the deferred interaction lifecycle", async () => {
+    await state.put(localBinding);
+    const failure = new Error("refresh failed");
+    panels.refreshBinding.mockRejectedValueOnce(failure);
+    const reply = vi.fn(async () => undefined);
+    const deferReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+
+    await expect(
+      runtime.handleCommand({
+        channelId: localBinding.threadId,
+        reply,
+        deferReply,
+        editReply,
+      } as never),
+    ).rejects.toBe(failure);
+
+    expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+    expect(editReply).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
   });
 
   it("normalizes todo.updated before routing the authoritative event payload", async () => {
@@ -108,19 +143,19 @@ describe("TodoRuntime", () => {
 
     await runtime.refreshInitial(localBinding);
 
-    expect(panels.refreshSession).toHaveBeenCalledWith("local", "session-local");
+    expect(panels.refreshBinding).toHaveBeenCalledWith(localBinding);
   });
 
   it("continues startup reconciliation after one binding fails", async () => {
     await state.put(localBinding);
     await state.put(remoteBinding);
-    panels.refreshSession
+    panels.refreshBinding
       .mockRejectedValueOnce(new Error("first failed"))
       .mockResolvedValueOnce(undefined);
 
     await runtime.reconcileStartup();
 
-    expect(panels.refreshSession).toHaveBeenCalledTimes(2);
+    expect(panels.refreshBinding).toHaveBeenCalledTimes(2);
     expect(logger.warn).toHaveBeenCalledWith(
       "discord.todo_panel_failed",
       expect.any(String),
@@ -135,13 +170,13 @@ describe("TodoRuntime", () => {
 
     await runtime.reconcileHost("remote");
 
-    expect(panels.refreshSession).toHaveBeenCalledTimes(1);
-    expect(panels.refreshSession).toHaveBeenCalledWith("remote", "session-remote");
+    expect(panels.refreshBinding).toHaveBeenCalledTimes(1);
+    expect(panels.refreshBinding).toHaveBeenCalledWith(remoteBinding);
   });
 
   it("does not place TODO content in bounded failure logs", async () => {
     const todoBody = "private TODO body";
-    panels.refreshSession.mockRejectedValueOnce(new Error(todoBody));
+    panels.refreshBinding.mockRejectedValueOnce(new Error(todoBody));
 
     await runtime.refreshInitial(localBinding);
 

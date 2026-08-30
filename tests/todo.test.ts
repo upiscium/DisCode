@@ -172,13 +172,30 @@ describe("TodoPanelManager", () => {
 
   it("creates one managed panel and persists only its Discord message id", async () => {
     const { manager, state, gateway, send, fetchMessage } = await fixture();
-    await manager.refreshSession("local", "session-1");
+    await manager.refreshBinding(binding);
 
     expect(gateway.listTodos).toHaveBeenCalledWith("/repo", "session-1");
     expect(fetchMessage).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(1);
     expect(state.getByThread("thread-1")?.todoMessageId).toBe("created-todo");
     expect(state.getByThread("thread-1")).not.toHaveProperty("todos");
+  });
+
+  it("refreshes the exact thread binding when a session id is bound more than once", async () => {
+    const { manager, state, gateway, send } = await fixture();
+    const duplicateBinding = {
+      ...binding,
+      threadId: "thread-2",
+      directory: "/other-repo",
+    };
+    await state.put(duplicateBinding);
+
+    await manager.refreshBinding(duplicateBinding);
+
+    expect(gateway.listTodos).toHaveBeenCalledWith("/other-repo", "session-1");
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(state.getByThread("thread-2")?.todoMessageId).toBe("created-todo");
+    expect(state.getByThread("thread-1")?.todoMessageId).toBeUndefined();
   });
 
   it("edits the existing managed panel instead of posting duplicates", async () => {
@@ -211,7 +228,7 @@ describe("TodoPanelManager", () => {
       todoMessageId: "deleted-todo",
       fetchError: { code: 10008 },
     });
-    await manager.refreshSession("local", "session-1");
+    await manager.refreshBinding(binding);
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(state.getByThread("thread-1")?.todoMessageId).toBe("created-todo");
@@ -224,7 +241,7 @@ describe("TodoPanelManager", () => {
       fetchError: transient,
     });
 
-    await expect(manager.refreshSession("local", "session-1")).rejects.toBe(transient);
+    await expect(manager.refreshBinding(binding)).rejects.toBe(transient);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -241,13 +258,26 @@ describe("TodoPanelManager", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("routes an SSE update to the exact directory when a session id is bound more than once", async () => {
+    const { manager, state, send } = await fixture();
+    const duplicateBinding = {
+      ...binding,
+      threadId: "thread-2",
+      directory: "/other-repo",
+    };
+    await state.put(duplicateBinding);
+
+    await manager.updateFromEvent("local", "/other-repo", "session-1", todos);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(state.getByThread("thread-2")?.todoMessageId).toBe("created-todo");
+    expect(state.getByThread("thread-1")?.todoMessageId).toBeUndefined();
+  });
+
   it("serializes concurrent refreshes per binding so only one panel is created", async () => {
     const { manager, send } = await fixture();
 
-    await Promise.all([
-      manager.refreshSession("local", "session-1"),
-      manager.refreshSession("local", "session-1"),
-    ]);
+    await Promise.all([manager.refreshBinding(binding), manager.refreshBinding(binding)]);
 
     expect(send).toHaveBeenCalledTimes(1);
   });
@@ -255,7 +285,7 @@ describe("TodoPanelManager", () => {
   it("revalidates current refresh authority after waiting in the binding queue", async () => {
     const { manager, state, gateway, send } = await fixture();
 
-    const refresh = manager.refreshSession("local", "session-1");
+    const refresh = manager.refreshBinding(binding);
     await state.put({
       ...binding,
       hostId: "other",

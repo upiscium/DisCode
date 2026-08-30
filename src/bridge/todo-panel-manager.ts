@@ -23,23 +23,20 @@ export class TodoPanelManager {
 
   readonly #queues = new Map<string, Promise<void>>();
 
-  async refreshSession(hostId: string, sessionId: string): Promise<void> {
-    const binding = this.#state.getBySession(hostId, sessionId);
-    if (!binding) return;
-
+  async refreshBinding(binding: SessionBinding): Promise<void> {
     return this.#enqueue(binding.threadId, async () => {
       const currentBinding = this.#state.getByThread(binding.threadId);
       if (
         !currentBinding ||
-        currentBinding.hostId !== hostId ||
-        currentBinding.sessionId !== sessionId ||
+        currentBinding.hostId !== binding.hostId ||
+        currentBinding.sessionId !== binding.sessionId ||
         currentBinding.directory !== binding.directory
       ) {
         return;
       }
-      const todos = await this.#gatewayFor(currentBinding.hostId).listTodos(
-        currentBinding.directory,
-        currentBinding.sessionId,
+      const todos = await this.#gatewayFor(binding.hostId).listTodos(
+        binding.directory,
+        binding.sessionId,
       );
       await this.#publish(currentBinding, todos);
     });
@@ -51,18 +48,30 @@ export class TodoPanelManager {
     sessionID: string,
     todos: readonly OpenCodeTodoItem[],
   ): Promise<void> {
-    const binding = this.#state.getBySession(hostId, sessionID);
-    if (!binding || binding.hostId !== hostId || binding.sessionId !== sessionID) return;
-    if (binding.directory !== eventDirectory) return;
+    const bindings = this.#state
+      .list()
+      .filter(
+        (binding) =>
+          binding.hostId === hostId &&
+          binding.sessionId === sessionID &&
+          binding.directory === eventDirectory,
+      );
 
-    return this.#enqueue(binding.threadId, async () => {
-      const currentBinding = this.#state.getByThread(binding.threadId);
-      if (!currentBinding || currentBinding.hostId !== hostId) return;
-      if (currentBinding.sessionId !== sessionID || currentBinding.directory !== eventDirectory) {
-        return;
-      }
-      await this.#publish(currentBinding, todos);
-    });
+    await Promise.all(
+      bindings.map((binding) =>
+        this.#enqueue(binding.threadId, async () => {
+          const currentBinding = this.#state.getByThread(binding.threadId);
+          if (!currentBinding || currentBinding.hostId !== hostId) return;
+          if (
+            currentBinding.sessionId !== sessionID ||
+            currentBinding.directory !== eventDirectory
+          ) {
+            return;
+          }
+          await this.#publish(currentBinding, todos);
+        }),
+      ),
+    );
   }
 
   runExclusive<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
