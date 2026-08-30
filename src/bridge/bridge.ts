@@ -53,6 +53,8 @@ import {
   lifecycleBlockReason,
   renderLifecycleBlock,
 } from "./session-lifecycle.js";
+import { TodoPanelManager } from "./todo-panel-manager.js";
+import { TodoRuntime } from "./todo-runtime.js";
 
 const PERMISSION_PREFIX = "ocperm";
 const QUESTION_PREFIX = "ocquestion";
@@ -67,6 +69,7 @@ export class Bridge {
   readonly #permissions = new PermissionPublicationTracker();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
   readonly #sessionHeaders: SessionHeaderManager;
+  readonly #todos: TodoRuntime;
 
   constructor(options: {
     config: AppConfig;
@@ -89,6 +92,16 @@ export class Bridge {
       discord: this.#discord,
       state: this.#state,
       gatewayFor: (hostId) => this.#hosts.get(hostId).gateway,
+    });
+    const todoPanels = new TodoPanelManager({
+      discord: this.#discord,
+      state: this.#state,
+      gatewayFor: (hostId) => this.#hosts.get(hostId).todo,
+    });
+    this.#todos = new TodoRuntime({
+      state: this.#state,
+      panels: todoPanels,
+      logger: this.#logger,
     });
   }
 
@@ -135,6 +148,7 @@ export class Bridge {
     await this.#reconcilePendingQuestions();
     await this.#reconcilePendingPermissions();
     await this.#reconcileSessionHeaders();
+    await this.#todos.reconcileStartup();
     this.#logger.info("bridge.started", "Bridge started", {
       host_count: this.#hosts.list().length,
     });
@@ -232,6 +246,9 @@ export class Bridge {
         break;
       case "status":
         await this.#status(interaction);
+        break;
+      case "todo":
+        await this.#todos.handleCommand(interaction);
         break;
       case "abort":
         await this.#abort(interaction);
@@ -362,6 +379,7 @@ export class Bridge {
       };
       await this.#state.put(binding);
       await this.#sessionHeaders.createInitialHeader(binding, thread);
+      await this.#todos.refreshInitial(binding);
       await interaction.editReply(
         `Created <#${thread.id}> for OpenCode host \`${runtime.id}\`, session \`${session.id}\`.`,
       );
@@ -580,10 +598,12 @@ export class Bridge {
       return;
     }
 
-    await executeCloseMutation({
-      deleteSession: () => runtime.gateway.deleteSession(binding.directory, binding.sessionId),
-      removeBinding: () => this.#state.remove(binding.threadId),
-    });
+    await this.#todos.runBindingMutation(binding.threadId, () =>
+      executeCloseMutation({
+        deleteSession: () => runtime.gateway.deleteSession(binding.directory, binding.sessionId),
+        removeBinding: () => this.#state.remove(binding.threadId),
+      }),
+    );
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.closed", "OpenCode session closed", {
@@ -643,9 +663,11 @@ export class Bridge {
       return;
     }
 
-    await executeUnbindMutation({
-      removeBinding: () => this.#state.remove(binding.threadId),
-    });
+    await this.#todos.runBindingMutation(binding.threadId, () =>
+      executeUnbindMutation({
+        removeBinding: () => this.#state.remove(binding.threadId),
+      }),
+    );
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.unbound", "Discord thread unbound from OpenCode session", {
@@ -733,7 +755,12 @@ export class Bridge {
   }
 
   async #consumeOpenCodeEvents(runtime: OpenCodeHostRuntime): Promise<void> {
-    for await (const globalEvent of runtime.gateway.events(this.#abortController.signal)) {
+    for await (const globalEvent of runtime.gateway.events(
+      this.#abortController.signal,
+      async ({ reconnected }) => {
+        if (reconnected) await this.#todos.reconcileHost(runtime.id);
+      },
+    )) {
       runtime.sseMonitor.observe();
       await this.#handleOpenCodeEvent(runtime.id, globalEvent.payload, globalEvent.directory).catch(
         (error) => {
@@ -764,6 +791,9 @@ export class Bridge {
         break;
       case "vcs.branch.updated":
         await this.#refreshHeadersForDirectory(hostId, directory);
+        break;
+      case "todo.updated":
+        await this.#todos.applyEvent(hostId, directory, event.properties);
         break;
       case "permission.updated": {
         const permission = event.properties;

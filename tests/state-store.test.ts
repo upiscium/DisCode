@@ -57,6 +57,7 @@ describe("StateStore", () => {
     expect(store.getByThread("thread-legacy")?.hostId).toBe("lab");
     expect(store.getByThread("thread-legacy")?.model).toBeUndefined();
     expect(store.getByThread("thread-legacy")?.agent).toBeUndefined();
+    expect(store.getByThread("thread-legacy")?.todoMessageId).toBeUndefined();
     const persisted = JSON.parse(await readFile(path, "utf8"));
     expect(persisted.version).toBe(1);
     expect(persisted.bindings["thread-legacy"].hostId).toBe("lab");
@@ -143,6 +144,20 @@ describe("StateStore", () => {
     const reloaded = new StateStore(path, "local");
     await reloaded.load();
     expect(reloaded.getByThread("thread-1")?.headerMessageId).toBe("header-1");
+    expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
+  });
+
+  it("adds an optional managed TODO panel id without changing state version", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const path = join(dir, "state.json");
+    const store = new StateStore(path, "local");
+    await store.load();
+    await store.put(binding);
+    await store.updateTodoMessageId("thread-1", "todo-1");
+
+    const reloaded = new StateStore(path, "local");
+    await reloaded.load();
+    expect(reloaded.getByThread("thread-1")?.todoMessageId).toBe("todo-1");
     expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
   });
 });

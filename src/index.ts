@@ -17,6 +17,7 @@ import {
 } from "./opencode/host-runtime-registry.js";
 import { ObservedOpenCodeGateway } from "./opencode/observed-gateway.js";
 import { createOpenCodeDirectoryResolver } from "./opencode/remote-directory-resolver.js";
+import { OpenCodeTodoGateway } from "./opencode/todo-gateway.js";
 import { loadSecretEnvironment } from "./secrets.js";
 import { StateStore } from "./state/state-store.js";
 
@@ -83,6 +84,11 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
     id: host.id,
     config: host,
     gateway,
+    todo: new OpenCodeTodoGateway({
+      baseUrl: host.baseUrl,
+      username: host.username,
+      ...(host.password ? { password: host.password } : {}),
+    }),
     sseMonitor: new OpenCodeSseMonitor(),
     authorizeDirectory: lazyDirectoryAuthorizer(host),
   };

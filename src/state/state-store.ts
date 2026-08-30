@@ -109,6 +109,16 @@ export class StateStore {
     await this.#persist();
   }
 
+  async updateTodoMessageId(threadId: string, messageId: string): Promise<void> {
+    const current = this.#state.bindings[threadId];
+    if (!current) return;
+    this.#state.bindings[threadId] = {
+      ...current,
+      todoMessageId: messageId,
+    };
+    await this.#persist();
+  }
+
   async remove(threadId: string): Promise<void> {
     delete this.#state.bindings[threadId];
     await this.#persist();

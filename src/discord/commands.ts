@@ -59,6 +59,9 @@ export const openCodeCommand = new SlashCommandBuilder()
       ),
   )
   .addSubcommand((command) =>
+    command.setName("todo").setDescription("Show this thread's current OpenCode TODO list"),
+  )
+  .addSubcommand((command) =>
     command.setName("status").setDescription("Show this thread's OpenCode status"),
   )
   .addSubcommand((command) =>
