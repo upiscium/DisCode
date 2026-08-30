@@ -17,6 +17,7 @@ import {
   normalizeSessionStatuses,
   normalizeTranscript,
   OpenCodeChildSessionGateway,
+  statusForReachableSession,
 } from "../src/opencode/child-session-gateway.js";
 
 const session = {
@@ -117,6 +118,31 @@ describe("OpenCodeChildSessionGateway", () => {
     expect(Object.getOwnPropertyDescriptor(prototypeKeyed, "__proto__")?.value).toBe("busy");
   });
 
+  it("uses idle for absent own status entries and preserves normalized statuses", () => {
+    const statuses = Object.assign(Object.create({ child: "busy" }), {
+      busy: "busy",
+      retry: "retry",
+      idle: "idle",
+      future: "unknown",
+    });
+    expect(statusForReachableSession(statuses, "child")).toBe("idle");
+    expect(statusForReachableSession(statuses, "busy")).toBe("busy");
+    expect(statusForReachableSession(statuses, "retry")).toBe("retry");
+    expect(statusForReachableSession(statuses, "idle")).toBe("idle");
+    expect(statusForReachableSession(statuses, "future")).toBe("unknown");
+  });
+
+  it("defaults getStatus to idle for an empty normalized status map", async () => {
+    mocks.status.mockResolvedValue({ data: {} });
+    const gateway = new OpenCodeChildSessionGateway({
+      hostId: "host-a",
+      baseUrl: "http://oc",
+      username: "u",
+    });
+
+    await expect(gateway.getStatus("/work", "child")).resolves.toBe("idle");
+  });
+
   it("extracts role, agent, model, bounded text and safe tool activity only", () => {
     const result = normalizeTranscript(
       {
@@ -187,6 +213,10 @@ describe("OpenCodeChildSessionGateway", () => {
     );
     mocks.get.mockResolvedValue({ data: { invalid: true } });
     await expect(gateway.getSession("/work", "child")).rejects.toThrow("invalid response");
+    mocks.status.mockResolvedValue({ data: { child: { type: 1 } } });
+    await expect(gateway.getStatus("/work", "child")).rejects.toThrow("invalid response");
+    expect(normalizeSessionStatuses({ child: { type: 1 } })).toBeUndefined();
+    expect(normalizeSessionStatuses(null)).toBeUndefined();
   });
 
   it("truncates a valid oversized text part into a bounded projection", () => {

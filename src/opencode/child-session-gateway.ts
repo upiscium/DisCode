@@ -92,9 +92,10 @@ export class OpenCodeChildSessionGateway {
     return session;
   }
 
+  /** Returns OpenCode's effective status after the caller has established session reachability. */
   async getStatus(directory: string, sessionId: string): Promise<NormalizedSessionStatus> {
     const statuses = await this.listStatuses(directory);
-    return statuses[sessionId] ?? "unknown";
+    return statusForReachableSession(statuses, sessionId);
   }
 
   async listStatuses(directory: string): Promise<NormalizedSessionStatuses> {
@@ -185,6 +186,14 @@ export function normalizeSessionStatuses(value: unknown): NormalizedSessionStatu
     statuses[sessionId] = status;
   }
   return statuses;
+}
+
+export function statusForReachableSession(
+  statuses: NormalizedSessionStatuses,
+  sessionId: string,
+): NormalizedSessionStatus {
+  if (!Object.hasOwn(statuses, sessionId)) return "idle";
+  return statuses[sessionId] ?? "unknown";
 }
 
 export function normalizeTranscripts(

@@ -4,14 +4,15 @@ import {
   type SubagentGraph,
   type SubagentRoot,
 } from "../domain/subagent-graph.js";
-import type {
-  NormalizedModel,
-  NormalizedSession,
-  NormalizedSessionStatus,
-  NormalizedSessionStatuses,
-  NormalizedToolActivity,
-  NormalizedTranscript,
-  OpenCodeChildSessionGateway,
+import {
+  type NormalizedModel,
+  type NormalizedSession,
+  type NormalizedSessionStatus,
+  type NormalizedSessionStatuses,
+  type NormalizedToolActivity,
+  type NormalizedTranscript,
+  type OpenCodeChildSessionGateway,
+  statusForReachableSession,
 } from "./child-session-gateway.js";
 import type { OpenCodeTodoGateway, OpenCodeTodoItem } from "./todo-gateway.js";
 
@@ -108,7 +109,7 @@ export class SubagentInspector {
     return {
       items: graph.descendants.map((descendant) => ({
         ...descendant,
-        status: statuses[descendant.id] ?? "unknown",
+        status: statusForReachableSession(statuses, descendant.id),
       })),
       depthBoundaryReached: graph.depthBoundaryReached,
       sessionLimitReached: graph.sessionLimitReached,
@@ -158,7 +159,7 @@ export class SubagentInspector {
       gateway.getRecentMessages(descendant.directory, descendant.id, messageLimit),
     ]);
     const status = statuses
-      ? (statuses[descendant.id] ?? "unknown")
+      ? statusForReachableSession(statuses, descendant.id)
       : await gateway.getStatus(descendant.directory, descendant.id);
     assertCurrentSession(session, descendant);
     const latestContext = [...messages]

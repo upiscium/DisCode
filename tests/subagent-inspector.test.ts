@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderSubagentDetail, renderSubagentList } from "../src/discord/subagent.js";
 import {
+  type NormalizedSessionStatus,
+  type NormalizedSessionStatuses,
   type NormalizedTranscript,
   normalizeTranscript,
 } from "../src/opencode/child-session-gateway.js";
@@ -38,8 +40,8 @@ function fixture(options: { todoFails?: boolean } = {}) {
       parentId === "root" ? [child] : [],
     ),
     getSession: vi.fn(async () => child),
-    getStatus: vi.fn(async () => "busy" as const),
-    listStatuses: vi.fn(async () => ({ child: "busy" as const })),
+    getStatus: vi.fn(async (): Promise<NormalizedSessionStatus> => "busy"),
+    listStatuses: vi.fn(async (): Promise<NormalizedSessionStatuses> => ({ child: "busy" })),
     getRecentMessages: vi.fn(async (): Promise<NormalizedTranscript[]> => recentMessages),
   };
   const normalizedTodos = normalizeOpenCodeTodoList([
@@ -90,6 +92,16 @@ describe("SubagentInspector", () => {
     expect(renderSubagentList(result)).toContain("Inspect tests");
   });
 
+  it("uses idle for a reachable child absent from the list status map", async () => {
+    const { inspector, gateway } = fixture();
+    gateway.listStatuses.mockResolvedValueOnce({});
+
+    const result = await inspector.listDescendants(root);
+
+    expect(result.items).toEqual([expect.objectContaining({ id: "child", status: "idle" })]);
+    expect(renderSubagentList(result)).toContain("Status: idle");
+  });
+
   it("discovers autocomplete choices without fetching transcript or TODO detail", async () => {
     const { inspector, gateway, todo } = fixture();
 
@@ -109,6 +121,15 @@ describe("SubagentInspector", () => {
     expect(todo.listTodos).not.toHaveBeenCalled();
   });
 
+  it("uses idle for a reachable child absent from the autocomplete status map", async () => {
+    const { inspector, gateway } = fixture();
+    gateway.listStatuses.mockResolvedValueOnce({});
+
+    const result = await inspector.autocompleteDescendants(root);
+
+    expect(result.items).toEqual([expect.objectContaining({ id: "child", status: "idle" })]);
+  });
+
   it("returns current transcript, safe tool activity, and normalized child TODO", async () => {
     const { inspector, todo, normalizedTodos } = fixture();
 
@@ -116,6 +137,7 @@ describe("SubagentInspector", () => {
 
     expect(detail).toMatchObject({
       id: "child",
+      status: "busy",
       messages: [expect.objectContaining({ role: "user", textParts: ["Inspect the tests"] })],
       toolActivity: [{ tool: "read", status: "completed" }],
       todos: normalizedTodos,
@@ -126,6 +148,17 @@ describe("SubagentInspector", () => {
     const rendered = renderSubagentDetail(detail);
     expect(rendered).toContain("User: Inspect the tests");
     expect(rendered).toContain("[ ] Review coverage");
+  });
+
+  it("reflects the gateway effective idle status in child detail", async () => {
+    const { inspector, gateway } = fixture();
+    gateway.getStatus.mockResolvedValueOnce("idle");
+
+    const detail = await inspector.inspectDescendant(root, "child");
+
+    expect(detail).toEqual(expect.objectContaining({ id: "child", status: "idle" }));
+    if (!detail) throw new Error("expected reachable child detail");
+    expect(renderSubagentDetail(detail)).toContain("Status: idle");
   });
 
   it("derives agent and model from one latest message context", async () => {

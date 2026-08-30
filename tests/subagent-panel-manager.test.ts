@@ -105,6 +105,49 @@ describe("SubagentPanelManager", () => {
     expect(same.send).not.toHaveBeenCalled();
   });
 
+  it("converges an existing managed panel when a reachable child becomes idle", async () => {
+    const child = {
+      id: "child-1",
+      parentId: binding.sessionId,
+      parentSessionId: binding.sessionId,
+      rootSessionId: binding.sessionId,
+      directory: binding.directory,
+      hostId: binding.hostId,
+      depth: 1,
+    };
+    const busy: SubagentInspectionList = {
+      items: [{ ...child, status: "busy" }],
+      depthBoundaryReached: false,
+      sessionLimitReached: false,
+    };
+    const idle: SubagentInspectionList = {
+      items: [{ ...child, status: "idle" }],
+      depthBoundaryReached: false,
+      sessionLimitReached: false,
+    };
+    const inspector = {
+      listDescendants: vi.fn().mockResolvedValueOnce(busy).mockResolvedValueOnce(idle),
+    };
+    const { manager, edit, send } = await fixture({
+      panelId: "panel-1",
+      existingContent: "old",
+      inspector,
+    });
+
+    await manager.refreshBinding(binding);
+    await manager.refreshBinding(binding);
+
+    expect(edit).toHaveBeenNthCalledWith(1, {
+      content: expect.stringContaining("Status: busy"),
+      allowedMentions: { parse: [] },
+    });
+    expect(edit).toHaveBeenNthCalledWith(2, {
+      content: expect.stringContaining("Status: idle"),
+      allowedMentions: { parse: [] },
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("recreates once for Discord unknown-message and propagates transient failures", async () => {
     const missing = await fixture({ panelId: "deleted", fetchError: { code: 10008 } });
     await missing.manager.refreshBinding(binding);
