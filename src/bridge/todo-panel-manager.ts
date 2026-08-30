@@ -1,10 +1,10 @@
 import type { Client, ThreadChannel } from "discord.js";
 import { renderTodoPanel } from "../discord/todo.js";
 import type { SessionBinding } from "../domain/session-binding.js";
-import type { OpenCodeGateway, OpenCodeTodoItem } from "../opencode/gateway.js";
+import type { OpenCodeTodoGateway, OpenCodeTodoItem } from "../opencode/todo-gateway.js";
 import type { StateStore } from "../state/state-store.js";
 
-type TodoGateway = Pick<OpenCodeGateway, "listTodos">;
+type TodoGateway = Pick<OpenCodeTodoGateway, "listTodos">;
 
 export class TodoPanelManager {
   readonly #discord: Client;
