@@ -67,13 +67,21 @@ export class SubagentSyncRuntime {
     if (hint.directory !== undefined && hint.directory !== eventDirectory) return;
 
     const selected = new Set<string>();
-    const add = (index: ThreadIndex, key: string) => {
-      for (const thread of index.get(key) ?? []) selected.add(thread);
+    const addIndexed = (key: string): boolean => {
+      let routed = false;
+      for (const threadId of this.#byHostDirectoryChild.get(key) ?? []) {
+        const binding = this.#state.getByThread(threadId);
+        if (binding?.hostId !== hostId || binding.directory !== eventDirectory) continue;
+        selected.add(threadId);
+        routed = true;
+      }
+      return routed;
     };
     const scoped = `${hostId}\0${eventDirectory}`;
-    add(this.#byHostDirectoryChild, `${scoped}\0${hint.sessionId}`);
+    addIndexed(`${scoped}\0${hint.sessionId}`);
+    let parentRouted = false;
     if (hint.parentId) {
-      add(this.#byHostDirectoryChild, `${scoped}\0${hint.parentId}`);
+      parentRouted = addIndexed(`${scoped}\0${hint.parentId}`);
       for (const binding of this.#state.list()) {
         if (
           binding.hostId === hostId &&
@@ -81,13 +89,14 @@ export class SubagentSyncRuntime {
           binding.sessionId === hint.parentId
         ) {
           selected.add(binding.threadId);
+          parentRouted = true;
         }
       }
     }
 
-    // A new or cold session has no index entry. Restrict the fallback to the
-    // exact host and directory; it must never fan out to another host/dir.
-    if (selected.size === 0) {
+    // A new/cold session, or an unresolved parent in a partial index, is
+    // ambiguous. Restrict fallback to the exact host and directory.
+    if (selected.size === 0 || (hint.parentId !== undefined && !parentRouted)) {
       for (const binding of this.#state.list()) {
         if (binding.hostId === hostId && binding.directory === eventDirectory) {
           selected.add(binding.threadId);
@@ -95,10 +104,7 @@ export class SubagentSyncRuntime {
       }
     }
     for (const threadId of selected) {
-      const binding = this.#state.getByThread(threadId);
-      if (binding?.hostId === hostId && binding.directory === eventDirectory) {
-        this.#schedule(threadId, hint.type);
-      }
+      this.#schedule(threadId, hint.type);
     }
   }
 

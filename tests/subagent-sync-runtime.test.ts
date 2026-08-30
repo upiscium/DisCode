@@ -87,18 +87,86 @@ describe("SubagentSyncRuntime", () => {
     expect(refreshBinding).toHaveBeenCalledTimes(1);
   });
 
-  it("selects both old child and new parent roots on reparent", async () => {
+  it("routes a reparent through healthy child and parent indexes", async () => {
     const first = binding({ threadId: "first", sessionId: "root-a" });
     const second = binding({ threadId: "second", sessionId: "root-b" });
     const { refreshBinding, runtime } = make([first, second]);
+    refreshBinding.mockImplementation(async (item) =>
+      inspection(item, item.threadId === "first" ? "x" : "y"),
+    );
     await runtime.reconcileStartup();
+    refreshBinding.mockClear();
 
     runtime.applyEvent("host", "/repo", {
       type: "session.updated",
-      properties: { info: { id: "child", parentID: "root-b", directory: "/repo" } },
+      properties: { info: { id: "x", parentID: "y", directory: "/repo" } },
     });
     await Promise.all([runtime.drainBinding("first"), runtime.drainBinding("second")]);
-    expect(refreshBinding).toHaveBeenCalledTimes(4);
+    expect(refreshBinding).toHaveBeenCalledTimes(2);
+    expect(refreshBinding).toHaveBeenCalledWith(first);
+    expect(refreshBinding).toHaveBeenCalledWith(second);
+  });
+
+  it("falls back within the exact scope when a reparent parent is not indexed", async () => {
+    const first = binding({ threadId: "first", sessionId: "root-a" });
+    const second = binding({ threadId: "second", sessionId: "root-b" });
+    const { refreshBinding, runtime } = make([first, second]);
+    let failSecond = true;
+    refreshBinding.mockImplementation(async (item) => {
+      if (item.threadId === "second" && failSecond) {
+        failSecond = false;
+        throw new Error("startup failed");
+      }
+      return inspection(item, item.threadId === "first" ? "x" : "y");
+    });
+    await runtime.reconcileStartup();
+    refreshBinding.mockClear();
+
+    runtime.applyEvent("host", "/repo", {
+      type: "session.updated",
+      properties: { info: { id: "x", parentID: "y", directory: "/repo" } },
+    });
+    await Promise.all([runtime.drainBinding("first"), runtime.drainBinding("second")]);
+    expect(refreshBinding).toHaveBeenCalledTimes(2);
+    expect(refreshBinding).toHaveBeenCalledWith(first);
+    expect(refreshBinding).toHaveBeenCalledWith(second);
+  });
+
+  it("keeps reparent routing isolated by host and directory", async () => {
+    const first = binding({ threadId: "first", sessionId: "root-a" });
+    const second = binding({ threadId: "second", sessionId: "root-b" });
+    const otherDirectory = binding({
+      threadId: "other-directory",
+      sessionId: "root-c",
+      directory: "/other",
+    });
+    const otherHost = binding({
+      threadId: "other-host",
+      sessionId: "root-d",
+      hostId: "remote",
+    });
+    const { refreshBinding, runtime } = make([first, second, otherDirectory, otherHost]);
+    refreshBinding.mockImplementation(async (item) =>
+      inspection(item, item.sessionId.endsWith("a") || item.sessionId.endsWith("c") ? "x" : "y"),
+    );
+    await runtime.reconcileStartup();
+    refreshBinding.mockClear();
+
+    runtime.applyEvent("host", "/repo", {
+      type: "session.updated",
+      properties: { info: { id: "x", parentID: "y", directory: "/repo" } },
+    });
+    await Promise.all([
+      runtime.drainBinding("first"),
+      runtime.drainBinding("second"),
+      runtime.drainBinding("other-directory"),
+      runtime.drainBinding("other-host"),
+    ]);
+    expect(refreshBinding).toHaveBeenCalledTimes(2);
+    expect(refreshBinding).toHaveBeenCalledWith(first);
+    expect(refreshBinding).toHaveBeenCalledWith(second);
+    expect(refreshBinding).not.toHaveBeenCalledWith(otherDirectory);
+    expect(refreshBinding).not.toHaveBeenCalledWith(otherHost);
   });
 
   it("continues startup after failure and rebuilds the next index", async () => {
