@@ -1,4 +1,4 @@
-import type { OpenCodeTodoItem } from "../opencode/gateway.js";
+import type { OpenCodeTodoItem } from "../opencode/todo-gateway.js";
 
 const DEFAULT_MAX_LENGTH = 1900;
 
