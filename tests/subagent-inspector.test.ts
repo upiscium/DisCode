@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderSubagentDetail, renderSubagentList } from "../src/discord/subagent.js";
-import type { NormalizedTranscript } from "../src/opencode/child-session-gateway.js";
+import {
+  type NormalizedTranscript,
+  normalizeTranscript,
+} from "../src/opencode/child-session-gateway.js";
 import { SubagentInspector } from "../src/opencode/subagent-inspector.js";
 import { normalizeOpenCodeTodoList } from "../src/opencode/todo-gateway.js";
 
@@ -25,6 +28,9 @@ function fixture(options: { todoFails?: boolean } = {}) {
       model: { providerID: "openai", modelID: "gpt-test" },
       textParts: ["Inspect the tests"],
       toolActivity: [{ tool: "read", status: "completed" }],
+      textTruncated: false,
+      partsOmitted: 0,
+      toolActivityOmitted: 0,
     },
   ];
   const gateway = {
@@ -114,6 +120,9 @@ describe("SubagentInspector", () => {
         model: { providerID: "provider", modelID: "older-model" },
         textParts: [],
         toolActivity: [],
+        textTruncated: false,
+        partsOmitted: 0,
+        toolActivityOmitted: 0,
       },
       {
         id: "newer",
@@ -122,6 +131,9 @@ describe("SubagentInspector", () => {
         model: { providerID: "provider", modelID: "newer-model" },
         textParts: [],
         toolActivity: [],
+        textTruncated: false,
+        partsOmitted: 0,
+        toolActivityOmitted: 0,
       },
     ]);
 
@@ -131,6 +143,31 @@ describe("SubagentInspector", () => {
       model: { providerID: "provider", modelID: "newer-model" },
     });
     expect(result.items[0]).not.toHaveProperty("agent");
+  });
+
+  it("keeps the descendant list usable with one long valid child message", async () => {
+    const { inspector, gateway } = fixture();
+    const longMessage = normalizeTranscript(
+      {
+        info: {
+          id: "long-message",
+          sessionID: "child",
+          role: "user",
+          agent: "explore",
+          model: { providerID: "openai", modelID: "gpt-test" },
+        },
+        parts: Array.from({ length: 45 }, () => ({ type: "text", text: "x".repeat(2_001) })),
+      },
+      "child",
+    );
+    if (!longMessage) throw new Error("valid long transcript must normalize");
+    gateway.getRecentMessages.mockResolvedValueOnce([longMessage]);
+
+    const result = await inspector.listDescendants(root);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ id: "child", agent: "explore" });
+    expect(longMessage).toMatchObject({ textTruncated: true, partsOmitted: 5 });
   });
 
   it("keeps child inspection usable when optional TODO retrieval fails", async () => {
@@ -158,5 +195,136 @@ describe("SubagentInspector", () => {
     gateway.getSession.mockResolvedValueOnce({ ...child, directory: "/other" });
 
     await expect(inspector.inspectDescendant(root, "child")).rejects.toThrow("identity changed");
+  });
+
+  it("drops descendants when an ancestor detaches before final graph validation", async () => {
+    const ancestor = { ...child, id: "ancestor", title: "Ancestor" };
+    const nested = { ...child, id: "nested", parentId: "ancestor", title: "Nested" };
+    let rootLookups = 0;
+    const gateway = {
+      listChildren: vi.fn(async (_directory: string, parentId: string) => {
+        if (parentId === "root") {
+          rootLookups += 1;
+          return rootLookups === 1 ? [ancestor] : [{ ...ancestor, directory: "/other" }];
+        }
+        return parentId === "ancestor" ? [nested] : [];
+      }),
+      getSession: vi.fn(async (_directory: string, id: string) =>
+        id === "ancestor" ? ancestor : nested,
+      ),
+      getStatus: vi.fn(async () => "busy" as const),
+      listStatuses: vi.fn(async () => ({ ancestor: "busy" as const, nested: "busy" as const })),
+      getRecentMessages: vi.fn(async (): Promise<NormalizedTranscript[]> => []),
+    };
+    const inspector = new SubagentInspector({ gatewayFor: () => gateway });
+
+    const result = await inspector.listDescendants(root);
+
+    expect(result.items).toEqual([]);
+  });
+
+  it("returns no nested detail when its ancestor detaches after observational reads", async () => {
+    const ancestor = { ...child, id: "ancestor", title: "Ancestor" };
+    const nested = { ...child, id: "nested", parentId: "ancestor", title: "Nested" };
+    let rootLookups = 0;
+    const gateway = {
+      listChildren: vi.fn(async (_directory: string, parentId: string) => {
+        if (parentId === "root") {
+          rootLookups += 1;
+          return rootLookups === 1 ? [ancestor] : [];
+        }
+        return parentId === "ancestor" ? [nested] : [];
+      }),
+      getSession: vi.fn(async () => nested),
+      getStatus: vi.fn(async () => "busy" as const),
+      listStatuses: vi.fn(async () => ({ nested: "busy" as const })),
+      getRecentMessages: vi.fn(async (): Promise<NormalizedTranscript[]> => []),
+    };
+    const inspector = new SubagentInspector({ gatewayFor: () => gateway });
+
+    await expect(inspector.inspectDescendant(root, "nested")).resolves.toBeUndefined();
+  });
+
+  it("returns no detail when the child stays reachable but its lineage changes", async () => {
+    const parentA = { ...child, id: "parent-a", title: "Parent A" };
+    const parentC = { ...child, id: "parent-c", title: "Parent C" };
+    const nested = { ...child, id: "nested", parentId: "parent-a", title: "Nested" };
+    let rootLookups = 0;
+    let parentALookups = 0;
+    let parentCLookups = 0;
+    const gateway = {
+      listChildren: vi.fn(async (_directory: string, parentId: string) => {
+        if (parentId === "root") {
+          rootLookups += 1;
+          return [parentA, parentC];
+        }
+        if (parentId === "parent-a") {
+          parentALookups += 1;
+          return parentALookups === 1 ? [nested] : [];
+        }
+        if (parentId === "parent-c") {
+          parentCLookups += 1;
+          return parentCLookups === 1 ? [] : [{ ...nested, parentId: "parent-c" }];
+        }
+        return [];
+      }),
+      getSession: vi.fn(async () => nested),
+      getStatus: vi.fn(async () => "busy" as const),
+      listStatuses: vi.fn(async () => ({ nested: "busy" as const })),
+      getRecentMessages: vi.fn(async (): Promise<NormalizedTranscript[]> => []),
+    };
+    const inspector = new SubagentInspector({ gatewayFor: () => gateway });
+
+    await expect(inspector.inspectDescendant(root, "nested")).resolves.toBeUndefined();
+    expect(rootLookups).toBe(2);
+  });
+
+  it("returns no detail when a direct child detaches before final graph validation", async () => {
+    const { inspector, gateway } = fixture();
+    let rootLookups = 0;
+    gateway.listChildren.mockImplementation(async (_directory: string, parentId: string) => {
+      if (parentId !== "root") return [];
+      rootLookups += 1;
+      return rootLookups === 1 ? [child] : [];
+    });
+
+    await expect(inspector.inspectDescendant(root, "child")).resolves.toBeUndefined();
+  });
+
+  it("filters detached list entries while retaining unaffected children", async () => {
+    const detached = { ...child, id: "detached", title: "Detached" };
+    const stable = { ...child, id: "stable", title: "Stable" };
+    let rootLookups = 0;
+    const sessions = { detached, stable };
+    const gateway = {
+      listChildren: vi.fn(async (_directory: string, parentId: string) => {
+        if (parentId !== "root") return [];
+        rootLookups += 1;
+        return rootLookups === 1 ? [detached, stable] : [stable];
+      }),
+      getSession: vi.fn(async (_directory: string, id: string) => {
+        const session = sessions[id as keyof typeof sessions];
+        if (!session) throw new Error("unexpected test session");
+        return session;
+      }),
+      getStatus: vi.fn(async () => "busy" as const),
+      listStatuses: vi.fn(async () => ({ detached: "busy" as const, stable: "busy" as const })),
+      getRecentMessages: vi.fn(async (): Promise<NormalizedTranscript[]> => []),
+    };
+    const inspector = new SubagentInspector({ gatewayFor: () => gateway });
+
+    const result = await inspector.listDescendants(root);
+
+    expect(result.items.map((item) => item.id)).toEqual(["stable"]);
+  });
+
+  it("keeps inspection when the final graph has the same lineage", async () => {
+    const { inspector } = fixture();
+
+    const result = await inspector.inspectDescendant(root, "child");
+
+    expect(result).toEqual(
+      expect.objectContaining({ id: "child", parentSessionId: "root", depth: 1 }),
+    );
   });
 });

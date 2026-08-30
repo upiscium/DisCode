@@ -118,7 +118,13 @@ describe("OpenCodeChildSessionGateway", () => {
           {
             type: "tool",
             tool: "shell",
-            state: { status: "completed", input: { secret: "x" }, output: "raw" },
+            state: {
+              status: "completed",
+              input: { secret: "x" },
+              output: "raw-output",
+              error: "raw-error",
+            },
+            metadata: { secret: "raw-metadata" },
           },
         ],
       },
@@ -133,9 +139,14 @@ describe("OpenCodeChildSessionGateway", () => {
       model: { providerID: "p", modelID: "m" },
       textParts: ["hello"],
       toolActivity: [{ tool: "shell", status: "completed" }],
+      textTruncated: false,
+      partsOmitted: 0,
+      toolActivityOmitted: 0,
     });
     expect(JSON.stringify(result)).not.toContain("secret");
-    expect(JSON.stringify(result)).not.toContain("raw");
+    expect(JSON.stringify(result)).not.toContain("raw-output");
+    expect(JSON.stringify(result)).not.toContain("raw-error");
+    expect(JSON.stringify(result)).not.toContain("raw-metadata");
   });
 
   it("rejects malformed responses and bounds recent requests", async () => {
@@ -162,12 +173,67 @@ describe("OpenCodeChildSessionGateway", () => {
     await expect(gateway.getSession("/work", "child")).rejects.toThrow("invalid response");
   });
 
-  it("rejects transcript text before it can become an unbounded render input", () => {
+  it("truncates a valid oversized text part into a bounded projection", () => {
+    const result = normalizeTranscript(
+      {
+        info: { id: "m", sessionID: "child", role: "user" },
+        parts: [{ type: "text", text: "x".repeat(2_001) }],
+      },
+      "child",
+    );
+    expect(result?.textParts).toEqual(["x".repeat(2_000)]);
+    expect(result).toMatchObject({ textTruncated: true, partsOmitted: 0 });
+  });
+
+  it("omits valid aggregate text beyond the deterministic character budget", () => {
+    const result = normalizeTranscript(
+      {
+        info: { id: "m", sessionID: "child", role: "assistant" },
+        parts: Array.from({ length: 5 }, (_, index) => ({
+          type: "text",
+          text: String(index).repeat(2_000),
+        })),
+      },
+      "child",
+    );
+    expect(result?.textParts.join("").length).toBe(8_000);
+    expect(result?.textParts).toHaveLength(4);
+    expect(result).toMatchObject({ textTruncated: true, partsOmitted: 0 });
+  });
+
+  it("omits valid parts and tool payloads beyond the projection budget", () => {
+    const result = normalizeTranscript(
+      {
+        info: { id: "m", sessionID: "child", role: "assistant" },
+        parts: Array.from({ length: 45 }, (_, index) => ({
+          type: "tool",
+          tool: `tool-${index}`,
+          state: {
+            status: "completed",
+            input: { secret: `input-${index}` },
+            output: `output-${index}`,
+            error: `error-${index}`,
+          },
+          metadata: { secret: `metadata-${index}` },
+        })),
+      },
+      "child",
+    );
+    expect(result?.toolActivity).toHaveLength(40);
+    expect(result).toMatchObject({ partsOmitted: 5, toolActivityOmitted: 5 });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("input-");
+    expect(serialized).not.toContain("output-");
+    expect(serialized).not.toContain("error-");
+    expect(serialized).not.toContain("metadata-");
+  });
+
+  it("still rejects malformed projected transcript parts", () => {
     expect(
       normalizeTranscript(
         {
           info: { id: "m", sessionID: "child", role: "user" },
-          parts: [{ type: "text", text: "x".repeat(2_001) }],
+          parts: [{ type: "text", text: 1 }],
         },
         "child",
       ),

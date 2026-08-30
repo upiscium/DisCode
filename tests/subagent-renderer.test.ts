@@ -56,6 +56,7 @@ describe("subagent Discord renderers", () => {
         messages: Array.from({ length: 8 }, (_, i) => ({
           role: (i % 2 ? "assistant" : "user") as "user" | "assistant",
           text: `message-${i}`,
+          ...(i === 7 ? { textTruncated: true, partsOmitted: 2, toolActivityOmitted: 3 } : {}),
         })),
         toolActivity: Array.from({ length: 8 }, (_, i) => ({
           tool: `tool-${i}`,
@@ -70,6 +71,8 @@ describe("subagent Discord renderers", () => {
     expect(output).toContain("Assistant:");
     expect(output).toContain("message(s) omitted");
     expect(output).toContain("tool entr");
+    expect(output).toContain("text truncated");
+    expect(output).toContain("part(s) omitted");
     expect(output).not.toContain("secret");
   });
 

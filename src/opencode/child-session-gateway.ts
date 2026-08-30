@@ -24,6 +24,9 @@ export type NormalizedTranscript = {
   model?: NormalizedModel;
   textParts: string[];
   toolActivity: NormalizedToolActivity[];
+  textTruncated: boolean;
+  partsOmitted: number;
+  toolActivityOmitted: number;
 };
 export type OpenCodeTranscript = NormalizedTranscript;
 
@@ -212,12 +215,19 @@ export function normalizeTranscript(
   if (isRecord(time) && time.created !== undefined && !finiteNumber(time.created)) {
     return undefined;
   }
-  if (!Array.isArray(value.parts) || value.parts.length > MAX_TRANSCRIPT_PARTS) {
+  if (!Array.isArray(value.parts)) {
     return undefined;
   }
   const textParts: string[] = [];
   const toolActivity: NormalizedToolActivity[] = [];
   let textCharacters = 0;
+  let textTruncated = false;
+  const partsOmitted = Math.max(0, value.parts.length - MAX_TRANSCRIPT_PARTS);
+  let toolActivityOmitted = 0;
+  for (let index = MAX_TRANSCRIPT_PARTS; index < value.parts.length; index += 1) {
+    const omittedPart = value.parts[index];
+    if (isRecord(omittedPart) && omittedPart.type === "tool") toolActivityOmitted += 1;
+  }
   let agent: string | undefined;
   let model: NormalizedModel | undefined;
   if (info.agent !== undefined) {
@@ -240,15 +250,18 @@ export function normalizeTranscript(
   ) {
     model = { providerID: info.providerID, modelID: info.modelID };
   }
-  for (const part of value.parts) {
+  for (const [index, part] of value.parts.entries()) {
+    if (index >= MAX_TRANSCRIPT_PARTS) break;
     if (!isRecord(part)) return undefined;
     if (part.type === "text") {
-      if (typeof part.text !== "string" || part.text.length > MAX_TEXT_PART_LENGTH) {
+      if (typeof part.text !== "string") {
         return undefined;
       }
-      textCharacters += part.text.length;
-      if (textCharacters > MAX_TEXT_CHARACTERS_PER_MESSAGE) return undefined;
-      textParts.push(part.text);
+      const remaining = MAX_TEXT_CHARACTERS_PER_MESSAGE - textCharacters;
+      const copied = part.text.slice(0, Math.min(MAX_TEXT_PART_LENGTH, Math.max(0, remaining)));
+      if (copied.length > 0) textParts.push(copied);
+      textCharacters += copied.length;
+      if (copied.length !== part.text.length) textTruncated = true;
     } else if (part.type === "tool") {
       if (
         !metadataString(part.tool) ||
@@ -259,10 +272,12 @@ export function normalizeTranscript(
       }
       if (toolActivity.length < MAX_TOOL_ACTIVITY_ITEMS) {
         toolActivity.push({ tool: part.tool, status: safeToolStatus(part.state.status) });
+      } else {
+        toolActivityOmitted += 1;
       }
-    } else if (part.type === "agent" && agent === undefined) {
+    } else if (part.type === "agent") {
       if (!metadataString(part.name)) return undefined;
-      agent = part.name;
+      if (agent === undefined) agent = part.name;
     }
   }
   return {
@@ -274,6 +289,9 @@ export function normalizeTranscript(
     ...(model ? { model } : {}),
     textParts,
     toolActivity,
+    textTruncated,
+    partsOmitted,
+    toolActivityOmitted,
   };
 }
 

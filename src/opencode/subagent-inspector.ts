@@ -76,14 +76,27 @@ export class SubagentInspector {
       graph.descendants,
       INSPECTION_CONCURRENCY,
       async (descendant) => {
-        const { metadata } = await this.#loadCurrent(descendant, 6, statuses);
-        return metadata;
+        try {
+          const { metadata } = await this.#loadCurrent(descendant, 6, statuses);
+          return metadata;
+        } catch (error) {
+          if (error instanceof SessionAuthorityChangedError) return undefined;
+          throw error;
+        }
       },
     );
+    const currentGraph = await this.resolveGraph(root);
+    const reachableLineage = new Map(
+      currentGraph.descendants.map((descendant) => [descendant.id, descendant]),
+    );
+    const reachableItems = items.filter(
+      (item): item is SubagentInspectionMetadata =>
+        item !== undefined && sameLineage(item, reachableLineage.get(item.id)),
+    );
     return {
-      items,
-      depthBoundaryReached: graph.depthBoundaryReached,
-      sessionLimitReached: graph.sessionLimitReached,
+      items: reachableItems,
+      depthBoundaryReached: currentGraph.depthBoundaryReached,
+      sessionLimitReached: currentGraph.sessionLimitReached,
     };
   }
 
@@ -105,6 +118,10 @@ export class SubagentInspector {
         todoUnavailable = true;
       }
     }
+
+    const currentGraph = await this.resolveGraph(root);
+    const currentDescendant = currentGraph.descendants.find((item) => item.id === descendant.id);
+    if (!sameLineage(descendant, currentDescendant)) return undefined;
 
     return {
       ...metadata,
@@ -174,6 +191,24 @@ function assertCurrentSession(session: NormalizedSession, descendant: ResolvedSu
     session.id !== descendant.id ||
     session.parentId !== descendant.parentSessionId
   ) {
-    throw new Error("OpenCode child session identity changed during inspection");
+    throw new SessionAuthorityChangedError();
   }
+}
+
+class SessionAuthorityChangedError extends Error {
+  constructor() {
+    super("OpenCode child session identity changed during inspection");
+  }
+}
+
+function sameLineage(expected: ResolvedSubagent, current: ResolvedSubagent | undefined): boolean {
+  return (
+    current !== undefined &&
+    current.hostId === expected.hostId &&
+    current.directory === expected.directory &&
+    current.id === expected.id &&
+    current.rootSessionId === expected.rootSessionId &&
+    current.parentSessionId === expected.parentSessionId &&
+    current.depth === expected.depth
+  );
 }

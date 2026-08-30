@@ -28,6 +28,9 @@ export type SubagentTranscriptMessage = {
   text?: string;
   textParts?: readonly string[];
   parts?: readonly SubagentTextPart[];
+  textTruncated?: boolean;
+  partsOmitted?: number;
+  toolActivityOmitted?: number;
 };
 
 export type SubagentTextPart = { type: "text"; text: string };
@@ -123,10 +126,11 @@ export function renderSubagentDetail(
   const messages = detail.messages ?? [];
   const messageLines = messages.slice(-limits.maxMessages).map((message) => {
     const text = messageText(message);
+    const omission = transcriptOmission(message);
     return `${message.role === "user" ? "User" : "Assistant"}: ${inline(
       text || UNKNOWN,
       limits.maxTextLength,
-    )}`;
+    )}${omission ? ` ${omission}` : ""}`;
   });
   const messageOmitted = Math.max(0, messages.length - messageLines.length);
   const tools = detail.toolActivity ?? [];
@@ -189,6 +193,16 @@ function messageText(message: SubagentTranscriptMessage): string {
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join(" ");
+}
+
+function transcriptOmission(message: SubagentTranscriptMessage): string {
+  const omissions: string[] = [];
+  if (message.textTruncated) omissions.push("text truncated");
+  if (message.partsOmitted) omissions.push(`${message.partsOmitted} part(s) omitted`);
+  if (message.toolActivityOmitted) {
+    omissions.push(`${message.toolActivityOmitted} tool entr(y/ies) omitted`);
+  }
+  return omissions.length ? `[${omissions.join("; ")}]` : "";
 }
 
 function renderModel(model: SubagentModel | undefined): string {
