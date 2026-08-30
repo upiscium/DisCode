@@ -37,7 +37,9 @@ describe("OpenCode TODO normalization", () => {
 
   it("rejects malformed TODO payloads", () => {
     expect(normalizeOpenCodeTodoList({ todos })).toBeUndefined();
-    expect(normalizeOpenCodeTodoList([{ content: "missing status", priority: "low" }])).toBeUndefined();
+    expect(
+      normalizeOpenCodeTodoList([{ content: "missing status", priority: "low" }]),
+    ).toBeUndefined();
   });
 });
 
@@ -92,7 +94,9 @@ describe("TodoPanelManager", () => {
       ...(options?.todoMessageId ? { todoMessageId: options.todoMessageId } : {}),
     });
 
-    const edit = vi.fn(async (_options: { content: string; allowedMentions?: unknown }) => undefined);
+    const edit = vi.fn(
+      async (_options: { content: string; allowedMentions?: unknown }) => undefined,
+    );
     const fetchMessage = vi.fn(async () => {
       if (options?.fetchFails) throw new Error("unknown message");
       return {
