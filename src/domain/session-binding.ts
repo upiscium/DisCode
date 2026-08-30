@@ -16,4 +16,5 @@ export type SessionBinding = {
   agent?: string;
   lastPublishedAssistantMessageId?: string;
   headerMessageId?: string;
+  todoMessageId?: string;
 };
