@@ -79,4 +79,19 @@ export const openCodeCommand = new SlashCommandBuilder()
   )
   .addSubcommand((command) =>
     command.setName("health").setDescription("Show health for all configured OpenCode hosts"),
+  )
+  .addSubcommand((command) =>
+    command.setName("subagents").setDescription("List available OpenCode subagents"),
+  )
+  .addSubcommand((command) =>
+    command
+      .setName("subagent")
+      .setDescription("Select an OpenCode subagent")
+      .addStringOption((option) =>
+        option
+          .setName("child")
+          .setDescription("OpenCode subagent to select")
+          .setRequired(true)
+          .setAutocomplete(true),
+      ),
   );
