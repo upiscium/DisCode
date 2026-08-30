@@ -119,6 +119,16 @@ export class StateStore {
     await this.#persist();
   }
 
+  async updateSubagentPanelMessageId(threadId: string, messageId: string): Promise<void> {
+    const current = this.#state.bindings[threadId];
+    if (!current) return;
+    this.#state.bindings[threadId] = {
+      ...current,
+      subagentPanelMessageId: messageId,
+    };
+    await this.#persist();
+  }
+
   async remove(threadId: string): Promise<void> {
     delete this.#state.bindings[threadId];
     await this.#persist();

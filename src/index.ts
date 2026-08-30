@@ -104,6 +104,10 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
 });
 
 const hosts = new OpenCodeHostRuntimeRegistry(defaultHostId, hostRuntimes);
+const subagentInspector = new SubagentInspector({
+  gatewayFor: (hostId) => hosts.get(hostId).child,
+  todoGatewayFor: (hostId) => hosts.get(hostId).todo,
+});
 const metrics = new PrometheusMetrics({
   version: BRIDGE_VERSION,
   hosts,
@@ -122,12 +126,10 @@ const bridge = new Bridge({
   state,
   hosts,
   logger: bridgeLogger,
+  subagentInspector,
   subagents: new SubagentRuntime({
     state,
-    inspector: new SubagentInspector({
-      gatewayFor: (hostId) => hosts.get(hostId).child,
-      todoGatewayFor: (hostId) => hosts.get(hostId).todo,
-    }),
+    inspector: subagentInspector,
     logger: bridgeLogger,
   }),
 });

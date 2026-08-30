@@ -4,6 +4,7 @@ import {
   executeUnbindMutation,
   lifecycleBlockReason,
   renderLifecycleBlock,
+  runManagedPanelMutation,
 } from "../src/bridge/session-lifecycle.js";
 
 describe("session lifecycle policy", () => {
@@ -70,5 +71,34 @@ describe("session lifecycle mutations", () => {
     await executeUnbindMutation({ removeBinding });
 
     expect(removeBinding).toHaveBeenCalledTimes(1);
+  });
+
+  it("acquires the TODO queue before the SubAgent queue", async () => {
+    const calls: string[] = [];
+    const serializer = (name: string) => ({
+      async runBindingMutation<T>(_threadId: string, operation: () => Promise<T>): Promise<T> {
+        calls.push(`${name}:enter`);
+        const result = await operation();
+        calls.push(`${name}:exit`);
+        return result;
+      },
+    });
+
+    await runManagedPanelMutation(
+      "thread",
+      serializer("todo"),
+      serializer("subagent"),
+      async () => {
+        calls.push("mutation");
+      },
+    );
+
+    expect(calls).toEqual([
+      "todo:enter",
+      "subagent:enter",
+      "mutation",
+      "subagent:exit",
+      "todo:exit",
+    ]);
   });
 });

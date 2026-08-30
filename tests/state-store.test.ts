@@ -58,6 +58,7 @@ describe("StateStore", () => {
     expect(store.getByThread("thread-legacy")?.model).toBeUndefined();
     expect(store.getByThread("thread-legacy")?.agent).toBeUndefined();
     expect(store.getByThread("thread-legacy")?.todoMessageId).toBeUndefined();
+    expect(store.getByThread("thread-legacy")?.subagentPanelMessageId).toBeUndefined();
     const persisted = JSON.parse(await readFile(path, "utf8"));
     expect(persisted.version).toBe(1);
     expect(persisted.bindings["thread-legacy"].hostId).toBe("lab");
@@ -159,5 +160,30 @@ describe("StateStore", () => {
     await reloaded.load();
     expect(reloaded.getByThread("thread-1")?.todoMessageId).toBe("todo-1");
     expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
+  });
+
+  it("persists only the optional SubAgent panel id with state version 1", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const path = join(dir, "state.json");
+    const store = new StateStore(path, "local");
+    await store.load();
+    await store.put(binding);
+    await store.updateSubagentPanelMessageId("thread-1", "subagent-1");
+
+    const reloaded = new StateStore(path, "local");
+    await reloaded.load();
+    expect(reloaded.getByThread("thread-1")?.subagentPanelMessageId).toBe("subagent-1");
+    expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
+  });
+
+  it("does not update a SubAgent panel id after its binding is removed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+    await store.remove("thread-1");
+    await store.updateSubagentPanelMessageId("thread-1", "stale-panel");
+
+    expect(store.getByThread("thread-1")).toBeUndefined();
   });
 });

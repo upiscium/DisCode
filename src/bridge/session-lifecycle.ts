@@ -13,6 +13,10 @@ export type UnbindMutationOperations = {
   removeBinding: () => Promise<void>;
 };
 
+type BindingMutationSerializer = {
+  runBindingMutation<T>(threadId: string, operation: () => Promise<T>): Promise<T>;
+};
+
 export function lifecycleBlockReason(
   status: LifecycleStatus,
   hasPendingQuestion: boolean,
@@ -38,4 +42,15 @@ export async function executeCloseMutation(operations: CloseMutationOperations):
 
 export async function executeUnbindMutation(operations: UnbindMutationOperations): Promise<void> {
   await operations.removeBinding();
+}
+
+export function runManagedPanelMutation<T>(
+  threadId: string,
+  todos: BindingMutationSerializer,
+  subagents: BindingMutationSerializer,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return todos.runBindingMutation(threadId, () =>
+    subagents.runBindingMutation(threadId, operation),
+  );
 }

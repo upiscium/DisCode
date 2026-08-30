@@ -40,6 +40,7 @@ import type {
   OpenCodeHostRuntimeRegistry,
 } from "../opencode/host-runtime-registry.js";
 import { validateOpenCodeSelection } from "../opencode/selection-validation.js";
+import type { SubagentInspector } from "../opencode/subagent-inspector.js";
 import type { StateStore } from "../state/state-store.js";
 import {
   hasPendingPermissionRequest,
@@ -52,8 +53,11 @@ import {
   executeUnbindMutation,
   lifecycleBlockReason,
   renderLifecycleBlock,
+  runManagedPanelMutation,
 } from "./session-lifecycle.js";
+import { SubagentPanelManager } from "./subagent-panel-manager.js";
 import type { SubagentCommandRuntime } from "./subagent-runtime.js";
+import { SubagentSyncRuntime } from "./subagent-sync-runtime.js";
 import { TodoPanelManager } from "./todo-panel-manager.js";
 import { TodoRuntime } from "./todo-runtime.js";
 
@@ -71,6 +75,7 @@ export class Bridge {
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
   readonly #sessionHeaders: SessionHeaderManager;
   readonly #subagents: SubagentCommandRuntime;
+  readonly #subagentSync: SubagentSyncRuntime;
   readonly #todos: TodoRuntime;
 
   constructor(options: {
@@ -78,6 +83,7 @@ export class Bridge {
     state: StateStore;
     hosts: OpenCodeHostRuntimeRegistry;
     logger?: LoggerLike;
+    subagentInspector: Pick<SubagentInspector, "listDescendants">;
     subagents: SubagentCommandRuntime;
   }) {
     this.#config = options.config;
@@ -105,6 +111,15 @@ export class Bridge {
     this.#todos = new TodoRuntime({
       state: this.#state,
       panels: todoPanels,
+      logger: this.#logger,
+    });
+    this.#subagentSync = new SubagentSyncRuntime({
+      state: this.#state,
+      panels: new SubagentPanelManager({
+        discord: this.#discord,
+        state: this.#state,
+        inspector: options.subagentInspector,
+      }),
       logger: this.#logger,
     });
   }
@@ -153,6 +168,7 @@ export class Bridge {
     await this.#reconcilePendingPermissions();
     await this.#reconcileSessionHeaders();
     await this.#todos.reconcileStartup();
+    await this.#subagentSync.reconcileStartup();
     this.#logger.info("bridge.started", "Bridge started", {
       host_count: this.#hosts.list().length,
     });
@@ -376,6 +392,7 @@ export class Bridge {
 
     const session = await runtime.gateway.createSession(directory, title);
     let thread: ThreadChannel | undefined;
+    let binding: SessionBinding | undefined;
     try {
       thread = await parent.threads.create({
         name: sanitizeThreadName(title),
@@ -383,7 +400,7 @@ export class Bridge {
         reason: `OpenCode session ${runtime.id}/${session.id}`,
       });
 
-      const binding: SessionBinding = {
+      binding = {
         threadId: thread.id,
         parentChannelId: parent.id,
         hostId: runtime.id,
@@ -398,6 +415,7 @@ export class Bridge {
       await this.#state.put(binding);
       await this.#sessionHeaders.createInitialHeader(binding, thread);
       await this.#todos.refreshInitial(binding);
+      await this.#subagentSync.refreshInitial(binding);
       await interaction.editReply(
         `Created <#${thread.id}> for OpenCode host \`${runtime.id}\`, session \`${session.id}\`.`,
       );
@@ -409,7 +427,16 @@ export class Bridge {
       });
     } catch (error) {
       if (thread) {
-        await this.#state.remove(thread.id).catch((rollbackError) => {
+        const rollbackThread = thread;
+        await runManagedPanelMutation(
+          rollbackThread.id,
+          this.#todos,
+          this.#subagentSync,
+          async () => {
+            await this.#state.remove(rollbackThread.id);
+            if (binding) this.#subagentSync.forgetBinding(binding);
+          },
+        ).catch((rollbackError) => {
           this.#logger.error(
             "session.rollback_failed",
             "Failed to roll back Bridge state",
@@ -616,12 +643,13 @@ export class Bridge {
       return;
     }
 
-    await this.#todos.runBindingMutation(binding.threadId, () =>
-      executeCloseMutation({
+    await runManagedPanelMutation(binding.threadId, this.#todos, this.#subagentSync, async () => {
+      await executeCloseMutation({
         deleteSession: () => runtime.gateway.deleteSession(binding.directory, binding.sessionId),
         removeBinding: () => this.#state.remove(binding.threadId),
-      }),
-    );
+      });
+      this.#subagentSync.forgetBinding(binding);
+    });
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.closed", "OpenCode session closed", {
@@ -681,11 +709,12 @@ export class Bridge {
       return;
     }
 
-    await this.#todos.runBindingMutation(binding.threadId, () =>
-      executeUnbindMutation({
+    await runManagedPanelMutation(binding.threadId, this.#todos, this.#subagentSync, async () => {
+      await executeUnbindMutation({
         removeBinding: () => this.#state.remove(binding.threadId),
-      }),
-    );
+      });
+      this.#subagentSync.forgetBinding(binding);
+    });
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.unbound", "Discord thread unbound from OpenCode session", {
@@ -776,7 +805,9 @@ export class Bridge {
     for await (const globalEvent of runtime.gateway.events(
       this.#abortController.signal,
       async ({ reconnected }) => {
-        if (reconnected) await this.#todos.reconcileHost(runtime.id);
+        if (!reconnected) return;
+        await this.#todos.reconcileHost(runtime.id);
+        await this.#subagentSync.reconcileHost(runtime.id);
       },
     )) {
       runtime.sseMonitor.observe();
@@ -802,6 +833,12 @@ export class Bridge {
     directory: string,
   ): Promise<void> {
     switch (event.type) {
+      case "session.created":
+      case "session.updated":
+      case "session.deleted":
+      case "session.status":
+        this.#subagentSync.applyEvent(hostId, directory, event);
+        break;
       case "message.updated":
         if (event.properties.info.role === "user") {
           await this.#refreshSessionHeader(hostId, event.properties.info.sessionID);
