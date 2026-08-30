@@ -7,6 +7,15 @@ export type OpenCodeTodoItem = {
   id?: string;
 };
 
+export type OpenCodeTodoUpdated = {
+  sessionID: string;
+  todos: OpenCodeTodoItem[];
+};
+
+const MAX_TODO_ITEMS = 500;
+const MAX_TODO_CONTENT_LENGTH = 4_000;
+const MAX_TODO_METADATA_LENGTH = 64;
+
 export class OpenCodeTodoGateway {
   readonly #client: ReturnType<typeof createOpencodeClient>;
 
@@ -37,17 +46,21 @@ export class OpenCodeTodoGateway {
 }
 
 export function normalizeOpenCodeTodoList(value: unknown): OpenCodeTodoItem[] | undefined {
-  if (!Array.isArray(value)) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_TODO_ITEMS) return undefined;
   const todos: OpenCodeTodoItem[] = [];
   for (const raw of value) {
     if (!isRecord(raw)) return undefined;
     if (
       typeof raw.content !== "string" ||
+      raw.content.length > MAX_TODO_CONTENT_LENGTH ||
       typeof raw.status !== "string" ||
-      typeof raw.priority !== "string"
+      raw.status.length > MAX_TODO_METADATA_LENGTH ||
+      typeof raw.priority !== "string" ||
+      raw.priority.length > MAX_TODO_METADATA_LENGTH
     ) {
       return undefined;
     }
+    if (typeof raw.id === "string" && raw.id.length > MAX_TODO_METADATA_LENGTH) return undefined;
     todos.push({
       content: raw.content,
       status: raw.status,
@@ -56,6 +69,12 @@ export function normalizeOpenCodeTodoList(value: unknown): OpenCodeTodoItem[] | 
     });
   }
   return todos;
+}
+
+export function normalizeOpenCodeTodoUpdated(value: unknown): OpenCodeTodoUpdated | undefined {
+  if (!isRecord(value) || typeof value.sessionID !== "string" || !value.sessionID) return undefined;
+  const todos = normalizeOpenCodeTodoList(value.todos);
+  return todos ? { sessionID: value.sessionID, todos } : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

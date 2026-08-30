@@ -1,5 +1,10 @@
 import { type LoggerLike, noopLogger } from "../logging/logger.js";
-import { type BridgeGlobalEvent, type OpenCodeEvent, OpenCodeGateway } from "./gateway.js";
+import {
+  type BridgeGlobalEvent,
+  type OpenCodeEvent,
+  type OpenCodeEventStreamLifecycleHook,
+  OpenCodeGateway,
+} from "./gateway.js";
 
 export type OpenCodeEventObserver = {
   handleEvent(
@@ -34,9 +39,12 @@ export class ObservedOpenCodeGateway extends OpenCodeGateway {
     this.#hostId = options.hostId;
   }
 
-  override async *events(signal?: AbortSignal): AsyncGenerator<BridgeGlobalEvent> {
+  override async *events(
+    signal?: AbortSignal,
+    onLifecycle?: OpenCodeEventStreamLifecycleHook,
+  ): AsyncGenerator<BridgeGlobalEvent> {
     try {
-      for await (const event of super.events(signal)) {
+      for await (const event of super.events(signal, onLifecycle)) {
         for (const observer of this.#observers) {
           try {
             await observer.handleEvent(event.payload, this);

@@ -1,12 +1,14 @@
 import type { OpenCodeHostConfig } from "../domain/host-registry.js";
 import type { OpenCodeSseMonitor } from "./diagnostics.js";
 import type { ObservedOpenCodeGateway } from "./observed-gateway.js";
+import type { OpenCodeTodoGateway } from "./todo-gateway.js";
 
 export type OpenCodeHostRuntime = Readonly<{
   id: string;
   config: OpenCodeHostConfig;
   authorizeDirectory: (directory: string) => Promise<string>;
   gateway: ObservedOpenCodeGateway;
+  todo: OpenCodeTodoGateway;
   sseMonitor: OpenCodeSseMonitor;
 }>;
 

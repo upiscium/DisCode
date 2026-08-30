@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { TodoPanelManager } from "../src/bridge/todo-panel-manager.js";
 import { renderTodoPanel } from "../src/discord/todo.js";
-import { normalizeOpenCodeTodoList } from "../src/opencode/todo-gateway.js";
+import type { OpenCodeEvent } from "../src/opencode/gateway.js";
+import {
+  normalizeOpenCodeTodoList,
+  normalizeOpenCodeTodoUpdated,
+} from "../src/opencode/todo-gateway.js";
 import { StateStore } from "../src/state/state-store.js";
 
 const binding = {
@@ -39,6 +43,42 @@ describe("OpenCode TODO normalization", () => {
     expect(normalizeOpenCodeTodoList({ todos })).toBeUndefined();
     expect(
       normalizeOpenCodeTodoList([{ content: "missing status", priority: "low" }]),
+    ).toBeUndefined();
+  });
+
+  it("normalizes the pinned todo.updated properties shape", () => {
+    const event = {
+      type: "todo.updated",
+      properties: { sessionID: "session-1", todos },
+    } satisfies Extract<OpenCodeEvent, { type: "todo.updated" }>;
+    expect(normalizeOpenCodeTodoUpdated(event.properties)).toEqual({
+      sessionID: "session-1",
+      todos,
+    });
+    expect(
+      normalizeOpenCodeTodoUpdated({
+        sessionID: "session-1",
+        todos: [{ content: "missing fields" }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects unreasonably large TODO event fields before rendering", () => {
+    expect(
+      normalizeOpenCodeTodoUpdated({
+        sessionID: "session-1",
+        todos: [{ content: "x".repeat(4_001), status: "pending", priority: "high" }],
+      }),
+    ).toBeUndefined();
+    expect(
+      normalizeOpenCodeTodoUpdated({
+        sessionID: "session-1",
+        todos: Array.from({ length: 501 }, () => ({
+          content: "item",
+          status: "pending",
+          priority: "low",
+        })),
+      }),
     ).toBeUndefined();
   });
 });
@@ -84,7 +124,7 @@ describe("TodoPanelManager", () => {
   async function fixture(options?: {
     todoMessageId?: string;
     existingContent?: string;
-    fetchFails?: boolean;
+    fetchError?: unknown;
   }) {
     const dir = await mkdtemp(join(tmpdir(), "ocdb-todo-"));
     const state = new StateStore(join(dir, "state.json"), "local");
@@ -98,7 +138,7 @@ describe("TodoPanelManager", () => {
       async (_options: { content: string; allowedMentions?: unknown }) => undefined,
     );
     const fetchMessage = vi.fn(async () => {
-      if (options?.fetchFails) throw new Error("unknown message");
+      if (options?.fetchError) throw options.fetchError;
       return {
         id: options?.todoMessageId ?? "todo-1",
         content: options?.existingContent ?? "old TODO",
@@ -146,21 +186,85 @@ describe("TodoPanelManager", () => {
       todoMessageId: "todo-1",
       existingContent: "old TODO",
     });
-    await manager.refreshSession("local", "session-1", todos);
+    await manager.updateFromEvent("local", "/repo", "session-1", todos);
 
     expect(send).not.toHaveBeenCalled();
     expect(edit).toHaveBeenCalledTimes(1);
     expect(edit.mock.calls[0]?.[0]?.content).toContain("Implement cache");
   });
 
+  it("does not edit when the rendered content is unchanged", async () => {
+    const content = renderTodoPanel(todos);
+    const { manager, send, edit } = await fixture({
+      todoMessageId: "todo-1",
+      existingContent: content,
+    });
+
+    await manager.updateFromEvent("local", "/repo", "session-1", todos);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(edit).not.toHaveBeenCalled();
+  });
+
   it("recreates a managed panel when its persisted Discord message was deleted", async () => {
     const { manager, state, send } = await fixture({
       todoMessageId: "deleted-todo",
-      fetchFails: true,
+      fetchError: { code: 10008 },
     });
-    await manager.refreshSession("local", "session-1", todos);
+    await manager.refreshSession("local", "session-1");
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(state.getByThread("thread-1")?.todoMessageId).toBe("created-todo");
+  });
+
+  it("propagates transient Discord fetch failures without sending", async () => {
+    const transient = new Error("Discord unavailable");
+    const { manager, send } = await fixture({
+      todoMessageId: "todo-1",
+      fetchError: transient,
+    });
+
+    await expect(manager.refreshSession("local", "session-1")).rejects.toBe(transient);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("ignores TODO events unless host, session, and directory match exactly", async () => {
+    const { manager, send } = await fixture();
+
+    await manager.updateFromEvent("other", "/repo", "session-1", todos);
+    await manager.updateFromEvent("local", "/other", "session-1", todos);
+    await manager.updateFromEvent("local", "/repo", "other-session", todos);
+    await manager.updateFromEvent("local", "/repo", "unknown-session", todos);
+    expect(send).not.toHaveBeenCalled();
+
+    await manager.updateFromEvent("local", "/repo", "session-1", todos);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes concurrent refreshes per binding so only one panel is created", async () => {
+    const { manager, send } = await fixture();
+
+    await Promise.all([
+      manager.refreshSession("local", "session-1"),
+      manager.refreshSession("local", "session-1"),
+    ]);
+
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("revalidates current refresh authority after waiting in the binding queue", async () => {
+    const { manager, state, gateway, send } = await fixture();
+
+    const refresh = manager.refreshSession("local", "session-1");
+    await state.put({
+      ...binding,
+      hostId: "other",
+      sessionId: "other-session",
+      directory: "/other",
+    });
+    await refresh;
+
+    expect(gateway.listTodos).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 });

@@ -99,6 +99,14 @@ export type OpenCodeSessionHeaderContext = {
   branch?: string;
 };
 
+export type OpenCodeEventStreamLifecycle = {
+  reconnected: boolean;
+};
+
+export type OpenCodeEventStreamLifecycleHook = (
+  lifecycle: OpenCodeEventStreamLifecycle,
+) => void | Promise<void>;
+
 export class OpenCodeGateway {
   readonly #client: ReturnType<typeof createOpencodeClient>;
   readonly #baseUrl: string;
@@ -416,18 +424,24 @@ export class OpenCodeGateway {
     return (await response.json()) as T;
   }
 
-  async *events(signal?: AbortSignal): AsyncGenerator<BridgeGlobalEvent> {
+  async *events(
+    signal?: AbortSignal,
+    onLifecycle?: OpenCodeEventStreamLifecycleHook,
+  ): AsyncGenerator<BridgeGlobalEvent> {
     let backoffMs = 1000;
+    let reconnected = false;
     while (!signal?.aborted) {
       try {
         const subscription = await this.#client.global.event({
           ...(signal ? { signal } : {}),
         });
+        await this.#runEventStreamLifecycleHook(onLifecycle, { reconnected }, signal);
         for await (const event of subscription.stream) {
           if (signal?.aborted) return;
           yield normalizeBridgeGlobalEvent(event);
         }
         backoffMs = 1000;
+        reconnected = true;
       } catch (error) {
         if (signal?.aborted) return;
         this.#logger.warn(
@@ -441,7 +455,29 @@ export class OpenCodeGateway {
         );
         await sleep(backoffMs, signal);
         backoffMs = Math.min(backoffMs * 2, 30_000);
+        reconnected = true;
       }
+    }
+  }
+
+  async #runEventStreamLifecycleHook(
+    hook: OpenCodeEventStreamLifecycleHook | undefined,
+    lifecycle: OpenCodeEventStreamLifecycle,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!hook || signal?.aborted) return;
+    try {
+      await hook(lifecycle);
+    } catch (error) {
+      this.#logger.warn(
+        "opencode.stream_lifecycle_failed",
+        "OpenCode event stream lifecycle hook failed",
+        {
+          ...(this.#hostId ? { host_id: this.#hostId } : {}),
+          reconnected: lifecycle.reconnected,
+        },
+        error,
+      );
     }
   }
 }
