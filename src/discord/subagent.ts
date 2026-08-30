@@ -99,10 +99,18 @@ export function renderSubagentList(
             ].join("; ")}`,
           ]
         : []),
+      ...(items.length === 0 ? ["No current SubAgents."] : []),
       ...lines,
       ...(omitted ? [`… ${omitted} subagent(s) omitted`] : []),
     ],
     limits.maxLength,
+  );
+}
+
+export function renderSubagentChoiceLabel(item: SubagentMetadata, maxLength = 100): string {
+  return inline(
+    `${item.title ?? "(untitled)"} · ${item.agent ?? "(unknown agent)"} · ${item.status ?? "unknown"}`,
+    maxLength,
   );
 }
 

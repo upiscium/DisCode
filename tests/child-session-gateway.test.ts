@@ -2,14 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   children: vi.fn(),
+  createClient: vi.fn(),
   get: vi.fn(),
   status: vi.fn(),
   messages: vi.fn(),
 }));
 
-vi.mock("@opencode-ai/sdk", () => ({
-  createOpencodeClient: vi.fn(() => ({ session: mocks })),
-}));
+vi.mock("@opencode-ai/sdk", () => ({ createOpencodeClient: mocks.createClient }));
 
 import {
   MAX_RECENT_MESSAGES,
@@ -31,6 +30,23 @@ const session = {
 describe("OpenCodeChildSessionGateway", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.createClient.mockReturnValue({ session: mocks });
+  });
+
+  it("constructs the SDK client with only the configured host endpoint and credentials", () => {
+    new OpenCodeChildSessionGateway({
+      hostId: "host-a",
+      baseUrl: "https://opencode.example/",
+      username: "operator",
+      password: "secret",
+    });
+
+    expect(mocks.createClient).toHaveBeenCalledWith({
+      baseUrl: "https://opencode.example",
+      headers: {
+        Authorization: `Basic ${Buffer.from("operator:secret", "utf8").toString("base64")}`,
+      },
+    });
   });
 
   it("uses the read-only child/session/status/messages SDK methods exactly", async () => {

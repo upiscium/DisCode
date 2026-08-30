@@ -100,6 +100,21 @@ export class SubagentInspector {
     };
   }
 
+  async autocompleteDescendants(root: SubagentRoot): Promise<SubagentInspectionList> {
+    const [graph, statuses] = await Promise.all([
+      this.resolveGraph(root),
+      this.#gatewayFor(root.hostId).listStatuses(root.directory),
+    ]);
+    return {
+      items: graph.descendants.map((descendant) => ({
+        ...descendant,
+        status: statuses[descendant.id] ?? "unknown",
+      })),
+      depthBoundaryReached: graph.depthBoundaryReached,
+      sessionLimitReached: graph.sessionLimitReached,
+    };
+  }
+
   async inspectDescendant(
     root: SubagentRoot,
     childSessionId: string,

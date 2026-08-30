@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { renderSubagentDetail, renderSubagentList } from "../src/discord/subagent.js";
+import {
+  renderSubagentChoiceLabel,
+  renderSubagentDetail,
+  renderSubagentList,
+} from "../src/discord/subagent.js";
 
 const base = {
   id: "child-1",
@@ -19,6 +23,20 @@ describe("subagent Discord renderers", () => {
     expect(output).toContain("Depth: 2");
     expect(output).not.toContain("host-a");
     expect(output).not.toContain("/repo");
+  });
+
+  it("renders an explicit empty state and safe bounded autocomplete labels", () => {
+    expect(renderSubagentList([])).toContain("No current SubAgents.");
+    const label = renderSubagentChoiceLabel({
+      ...base,
+      title: "@everyone **inspect** `tests`",
+      agent: "explore",
+      status: "busy",
+    });
+    expect(label.length).toBeLessThanOrEqual(100);
+    expect(label).not.toContain("@everyone");
+    expect(label).not.toContain("*");
+    expect(label).not.toContain("`");
   });
 
   it("bounds long lists and reports omitted descendants", () => {

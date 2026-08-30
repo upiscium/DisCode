@@ -90,6 +90,25 @@ describe("SubagentInspector", () => {
     expect(renderSubagentList(result)).toContain("Inspect tests");
   });
 
+  it("discovers autocomplete choices without fetching transcript or TODO detail", async () => {
+    const { inspector, gateway, todo } = fixture();
+
+    const result = await inspector.autocompleteDescendants(root);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: "child",
+        rootSessionId: "root",
+        hostId: "host-a",
+        directory: "/repo",
+        status: "busy",
+      }),
+    ]);
+    expect(gateway.getSession).not.toHaveBeenCalled();
+    expect(gateway.getRecentMessages).not.toHaveBeenCalled();
+    expect(todo.listTodos).not.toHaveBeenCalled();
+  });
+
   it("returns current transcript, safe tool activity, and normalized child TODO", async () => {
     const { inspector, todo, normalizedTodos } = fixture();
 

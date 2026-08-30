@@ -53,6 +53,7 @@ import {
   lifecycleBlockReason,
   renderLifecycleBlock,
 } from "./session-lifecycle.js";
+import type { SubagentCommandRuntime } from "./subagent-runtime.js";
 import { TodoPanelManager } from "./todo-panel-manager.js";
 import { TodoRuntime } from "./todo-runtime.js";
 
@@ -69,6 +70,7 @@ export class Bridge {
   readonly #permissions = new PermissionPublicationTracker();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
   readonly #sessionHeaders: SessionHeaderManager;
+  readonly #subagents: SubagentCommandRuntime;
   readonly #todos: TodoRuntime;
 
   constructor(options: {
@@ -76,11 +78,13 @@ export class Bridge {
     state: StateStore;
     hosts: OpenCodeHostRuntimeRegistry;
     logger?: LoggerLike;
+    subagents: SubagentCommandRuntime;
   }) {
     this.#config = options.config;
     this.#state = options.state;
     this.#hosts = options.hosts;
     this.#logger = options.logger ?? noopLogger;
+    this.#subagents = options.subagents;
     this.#discord = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -250,6 +254,12 @@ export class Bridge {
       case "todo":
         await this.#todos.handleCommand(interaction);
         break;
+      case "subagents":
+        await this.#subagents.handleListCommand(interaction);
+        break;
+      case "subagent":
+        await this.#subagents.handleDetailCommand(interaction);
+        break;
       case "abort":
         await this.#abort(interaction);
         break;
@@ -273,6 +283,14 @@ export class Bridge {
   async #handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const subcommand = interaction.options.getSubcommand();
     const focused = interaction.options.getFocused(true);
+    if (subcommand === "subagent") {
+      if (focused.name === "child") {
+        await this.#subagents.handleAutocomplete(interaction);
+      } else {
+        await interaction.respond([]);
+      }
+      return;
+    }
     if (focused.name !== "model" && focused.name !== "agent") {
       await interaction.respond([]);
       return;

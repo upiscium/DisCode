@@ -55,7 +55,7 @@ describe("/oc command registration", () => {
     });
   });
 
-  it("registers schema-only subagent commands", () => {
+  it("registers subagent command schemas", () => {
     const json = openCodeCommand.toJSON() as CommandJson;
     const subagents = json.options?.find((option) => option.name === "subagents");
     const subagent = json.options?.find((option) => option.name === "subagent");
