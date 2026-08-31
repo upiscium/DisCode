@@ -38,11 +38,19 @@ describe("existing session renderers", () => {
 
   it("neutralizes mentions, markdown, and newlines without exposing directories", () => {
     const output = renderExistingSessions([
-      { ...base, id: "s-1", title: "@everyone **bold** `code`\nnext" },
+      {
+        ...base,
+        id: "ses_fab083_abc",
+        title: "@everyone **bold** `code` [click](https://bad.example)\nnext",
+      },
     ]);
+    expect(output).toContain("Session: `ses_fab083_abc`");
+    expect(output).toContain("ses_fab083_abc");
     expect(output).toContain("＠everyone");
-    expect(output).not.toMatch(/@everyone|`|\/repo/);
+    expect(output).not.toMatch(/@everyone|\/repo/);
     expect(output).not.toContain("**bold**");
+    expect(output).not.toContain("`code`");
+    expect(output).not.toContain("[click](https://bad.example)");
   });
 
   it("projects only eligible, unbound sessions in the exact scope", () => {
@@ -56,6 +64,13 @@ describe("existing session renderers", () => {
     ];
     expect(projectExistingSessionChoices(items, scope).map((choice) => choice.value)).toEqual([
       "good",
+    ]);
+  });
+
+  it("keeps canonical autocomplete values unchanged", () => {
+    const id = "ses_fab083_abc";
+    expect(projectExistingSessionChoices([{ ...base, id }], scope)).toEqual([
+      expect.objectContaining({ value: id }),
     ]);
   });
 

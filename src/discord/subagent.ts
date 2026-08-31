@@ -1,4 +1,5 @@
 import type { OpenCodeTodoItem } from "../opencode/todo-gateway.js";
+import { renderCanonicalIdentifier } from "./identifier.js";
 
 const DEFAULT_MAX_LENGTH = 1900;
 const DEFAULT_MAX_ITEMS = 20;
@@ -81,7 +82,7 @@ export function renderSubagentList(
   const lines = visible.map((item, index) =>
     [
       `${index + 1}. ${inline(item.title ?? UNKNOWN, 100)}`,
-      `Session: ${inline(item.id, 120)} · Parent: ${inline(item.parentSessionId, 120)}`,
+      `Session: ${renderCanonicalIdentifier(item.id, 120)} · Parent: ${renderCanonicalIdentifier(item.parentSessionId, 120)}`,
       `Status: ${inline(item.status ?? UNKNOWN, 40)} · Agent: ${inline(item.agent ?? UNKNOWN, 60)}`,
       `Model: ${inline(renderModel(item.model), 100)} · Depth: ${item.depth}`,
       `Created: ${inline(renderValue(item.createdAt), 80)} · Updated: ${inline(renderValue(item.updatedAt), 80)}`,
@@ -125,7 +126,7 @@ export function renderSubagentDetail(
   const limits = getLimits(options);
   const header = [
     "🤖 **Subagent detail**",
-    `Session: ${inline(detail.id, 120)} · Parent: ${inline(detail.parentSessionId, 120)}`,
+    `Session: ${renderCanonicalIdentifier(detail.id, 120)} · Parent: ${renderCanonicalIdentifier(detail.parentSessionId, 120)}`,
     `Title: ${inline(detail.title ?? UNKNOWN, 100)} · Status: ${inline(detail.status ?? UNKNOWN, 40)}`,
     `Agent: ${inline(detail.agent ?? UNKNOWN, 60)} · Model: ${inline(renderModel(detail.model), 100)}`,
     `Created: ${inline(renderValue(detail.createdAt), 80)} · Updated: ${inline(renderValue(detail.updatedAt), 80)}`,
@@ -234,6 +235,9 @@ function inline(value: string, maxLength: number): string {
   const safe = value
     .replace(/@/g, "＠")
     .replace(/[\\`*_~>|]/g, "")
+    .replaceAll("[", "")
+    .replaceAll("]", "")
+    .replaceAll("#", "")
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();

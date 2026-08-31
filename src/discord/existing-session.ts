@@ -4,6 +4,7 @@ import {
   type ExistingSessionScope,
   isEligibleExistingSession,
 } from "../opencode/existing-session-discovery.js";
+import { renderCanonicalIdentifier } from "./identifier.js";
 
 const DEFAULT_MAX_LENGTH = 1_900;
 const DEFAULT_MAX_ITEMS = 20;
@@ -32,7 +33,7 @@ export function renderExistingSessions(
     lines.push(
       [
         `${index + 1}. ${inline(item.title ?? UNKNOWN, 120)}`,
-        `Session: ${inline(item.id, 120)}`,
+        `Session: ${renderCanonicalIdentifier(item.id, 120)}`,
         `Status: ${inline(item.status ?? UNKNOWN, 40)}`,
         `Updated: ${inline(updatedText(item.updatedAt), 40)}`,
         `Binding: ${item.binding}`,
@@ -48,13 +49,17 @@ export function projectExistingSessionChoices(
   items: readonly DiscoveredExistingSession[],
   options: ExistingSessionScope & { query?: string },
 ): ExistingSessionChoice[] {
-  const query = sanitize(options.query ?? "").toLowerCase();
+  const query = searchable(options.query ?? "");
+  const humanQuery = searchable(sanitize(options.query ?? ""));
   return items
     .filter((item) => isEligibleExistingSession(item, options))
     .filter((item) => item.binding === "unbound")
     .filter((item) => {
       if (!query) return true;
-      return `${sanitize(item.title ?? "")} ${sanitize(item.id)}`.toLowerCase().includes(query);
+      return (
+        (humanQuery.length > 0 && searchable(sanitize(item.title ?? "")).includes(humanQuery)) ||
+        searchable(item.id).includes(query)
+      );
     })
     .sort(compareExistingSessions)
     .map((item) => ({
@@ -88,6 +93,9 @@ function sanitize(value: string): string {
   return value
     .replace(/@/g, "＠")
     .replace(/[\\`*_~>|]/g, "")
+    .replaceAll("[", "")
+    .replaceAll("]", "")
+    .replaceAll("#", "")
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -96,6 +104,14 @@ function sanitize(value: string): string {
 function inline(value: string, maxLength: number): string {
   const safe = sanitize(value);
   return safe.length <= maxLength ? safe : `${safe.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function searchable(value: string): string {
+  return value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function bounded(value: string, maxLength: number): string {
