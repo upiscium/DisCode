@@ -40,6 +40,51 @@ describe("/oc command registration", () => {
     expect(agent).toMatchObject({ required: false, autocomplete: true });
   });
 
+  it("registers /oc sessions with a required directory and optional host", () => {
+    const json = openCodeCommand.toJSON() as CommandJson;
+    const sessions = json.options?.find((option) => option.name === "sessions");
+
+    expect(sessions?.options).toEqual([
+      expect.objectContaining({ name: "directory", required: true }),
+      expect.objectContaining({ name: "host", required: false }),
+    ]);
+  });
+
+  it("registers /oc bind with required directory and session autocomplete and optional host", () => {
+    const json = openCodeCommand.toJSON() as CommandJson;
+    const bind = json.options?.find((option) => option.name === "bind");
+
+    expect(bind?.options).toEqual([
+      expect.objectContaining({ name: "directory", required: true }),
+      expect.objectContaining({ name: "session", required: true, autocomplete: true }),
+      expect.objectContaining({ name: "host", required: false }),
+    ]);
+  });
+
+  it("does not expose connection or authority override options on /oc sessions or /oc bind", () => {
+    const json = openCodeCommand.toJSON() as CommandJson;
+    const commands = json.options?.filter((option) => ["sessions", "bind"].includes(option.name));
+    const forbiddenOptions = [
+      "url",
+      "hostname",
+      "username",
+      "password",
+      "credential",
+      "model",
+      "agent",
+    ];
+
+    for (const command of commands ?? []) {
+      for (const option of command.options ?? []) {
+        expect(forbiddenOptions).not.toContain(option.name);
+      }
+    }
+
+    expect(
+      commands?.find((command) => command.name === "bind")?.options?.map((option) => option.name),
+    ).toEqual(["directory", "session", "host"]);
+  });
+
   it("registers bound-thread model and agent selection subcommands", () => {
     const json = openCodeCommand.toJSON() as CommandJson;
     const modelCommand = json.options?.find((option) => option.name === "model");

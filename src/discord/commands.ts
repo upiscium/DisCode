@@ -36,6 +36,45 @@ export const openCodeCommand = new SlashCommandBuilder()
   )
   .addSubcommand((command) =>
     command
+      .setName("sessions")
+      .setDescription("List OpenCode sessions for a directory")
+      .addStringOption((option) =>
+        option
+          .setName("directory")
+          .setDescription("Absolute repository directory")
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("host")
+          .setDescription("Configured OpenCode host ID (defaults to the configured default host)"),
+      ),
+  )
+  .addSubcommand((command) =>
+    command
+      .setName("bind")
+      .setDescription("Bind an existing OpenCode session to a Discord thread")
+      .addStringOption((option) =>
+        option
+          .setName("directory")
+          .setDescription("Absolute repository directory")
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("session")
+          .setDescription("OpenCode session to bind")
+          .setRequired(true)
+          .setAutocomplete(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("host")
+          .setDescription("Configured OpenCode host ID (defaults to the configured default host)"),
+      ),
+  )
+  .addSubcommand((command) =>
+    command
       .setName("model")
       .setDescription("Set this thread's OpenCode model preference")
       .addStringOption((option) =>
