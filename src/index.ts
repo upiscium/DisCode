@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { AssistantStreamingPublisher } from "./bridge/assistant-streaming-publisher.js";
 import { Bridge } from "./bridge/bridge.js";
+import { SubagentRuntime } from "./bridge/subagent-runtime.js";
 import { ToolSummaryPublisher } from "./bridge/tool-summary-publisher.js";
 import { loadConfig } from "./config.js";
 import { selectionAutocomplete } from "./discord/selection-autocomplete.js";
@@ -10,6 +11,7 @@ import type { OpenCodeHostConfig } from "./domain/host-registry.js";
 import { Logger } from "./logging/logger.js";
 import { PrometheusMetrics } from "./metrics/prometheus.js";
 import { MetricsServer } from "./metrics/server.js";
+import { OpenCodeChildSessionGateway } from "./opencode/child-session-gateway.js";
 import { OpenCodeSseMonitor, setOpenCodeHealthLogger } from "./opencode/diagnostics.js";
 import {
   type OpenCodeHostRuntime,
@@ -17,6 +19,7 @@ import {
 } from "./opencode/host-runtime-registry.js";
 import { ObservedOpenCodeGateway } from "./opencode/observed-gateway.js";
 import { createOpenCodeDirectoryResolver } from "./opencode/remote-directory-resolver.js";
+import { SubagentInspector } from "./opencode/subagent-inspector.js";
 import { OpenCodeTodoGateway } from "./opencode/todo-gateway.js";
 import { loadSecretEnvironment } from "./secrets.js";
 import { StateStore } from "./state/state-store.js";
@@ -84,6 +87,12 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
     id: host.id,
     config: host,
     gateway,
+    child: new OpenCodeChildSessionGateway({
+      hostId: host.id,
+      baseUrl: host.baseUrl,
+      username: host.username,
+      ...(host.password ? { password: host.password } : {}),
+    }),
     todo: new OpenCodeTodoGateway({
       baseUrl: host.baseUrl,
       username: host.username,
@@ -95,6 +104,10 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
 });
 
 const hosts = new OpenCodeHostRuntimeRegistry(defaultHostId, hostRuntimes);
+const subagentInspector = new SubagentInspector({
+  gatewayFor: (hostId) => hosts.get(hostId).child,
+  todoGatewayFor: (hostId) => hosts.get(hostId).todo,
+});
 const metrics = new PrometheusMetrics({
   version: BRIDGE_VERSION,
   hosts,
@@ -108,7 +121,18 @@ const metricsServer = new MetricsServer({
   exporter: metrics,
   logger: baseLogger,
 });
-const bridge = new Bridge({ config, state, hosts, logger: bridgeLogger });
+const bridge = new Bridge({
+  config,
+  state,
+  hosts,
+  logger: bridgeLogger,
+  subagentInspector,
+  subagents: new SubagentRuntime({
+    state,
+    inspector: subagentInspector,
+    logger: bridgeLogger,
+  }),
+});
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {

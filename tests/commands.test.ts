@@ -54,4 +54,34 @@ describe("/oc command registration", () => {
       autocomplete: true,
     });
   });
+
+  it("registers subagent command schemas", () => {
+    const json = openCodeCommand.toJSON() as CommandJson;
+    const subagents = json.options?.find((option) => option.name === "subagents");
+    const subagent = json.options?.find((option) => option.name === "subagent");
+
+    expect(subagents).toBeDefined();
+    expect(subagents?.options ?? []).toHaveLength(0);
+    expect(subagent?.options).toEqual([
+      expect.objectContaining({
+        name: "child",
+        required: true,
+        autocomplete: true,
+      }),
+    ]);
+  });
+
+  it("does not expose authority override options on subagent commands", () => {
+    const json = openCodeCommand.toJSON() as CommandJson;
+    const subagentCommands = json.options?.filter((option) =>
+      ["subagents", "subagent"].includes(option.name),
+    );
+    const authorityOverrideOptions = ["host", "session", "directory", "model", "agent"];
+
+    for (const command of subagentCommands ?? []) {
+      for (const option of command.options ?? []) {
+        expect(authorityOverrideOptions).not.toContain(option.name);
+      }
+    }
+  });
 });
