@@ -42,6 +42,7 @@ import type {
 import { validateOpenCodeSelection } from "../opencode/selection-validation.js";
 import type { SubagentInspector } from "../opencode/subagent-inspector.js";
 import type { StateStore } from "../state/state-store.js";
+import type { ExistingSessionCommandRuntime } from "./existing-session-runtime.js";
 import {
   hasPendingPermissionRequest,
   PermissionPublicationTracker,
@@ -73,6 +74,7 @@ export class Bridge {
   readonly #abortController = new AbortController();
   readonly #permissions = new PermissionPublicationTracker();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
+  readonly #existingSessions: ExistingSessionCommandRuntime;
   readonly #sessionHeaders: SessionHeaderManager;
   readonly #subagents: SubagentCommandRuntime;
   readonly #subagentSync: SubagentSyncRuntime;
@@ -82,6 +84,7 @@ export class Bridge {
     config: AppConfig;
     state: StateStore;
     hosts: OpenCodeHostRuntimeRegistry;
+    existingSessions: ExistingSessionCommandRuntime;
     logger?: LoggerLike;
     subagentInspector: Pick<SubagentInspector, "listDescendants">;
     subagents: SubagentCommandRuntime;
@@ -89,6 +92,7 @@ export class Bridge {
     this.#config = options.config;
     this.#state = options.state;
     this.#hosts = options.hosts;
+    this.#existingSessions = options.existingSessions;
     this.#logger = options.logger ?? noopLogger;
     this.#subagents = options.subagents;
     this.#discord = new Client({
@@ -258,6 +262,12 @@ export class Bridge {
       case "start":
         await this.#startSession(interaction);
         break;
+      case "sessions":
+        await this.#existingSessions.handleSessionsCommand(interaction);
+        break;
+      case "bind":
+        await this.#existingSessions.handleBindCommand(interaction);
+        break;
       case "model":
         await this.#setModel(interaction);
         break;
@@ -299,6 +309,10 @@ export class Bridge {
   async #handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const subcommand = interaction.options.getSubcommand();
     const focused = interaction.options.getFocused(true);
+    if (subcommand === "bind") {
+      await this.#existingSessions.handleBindAutocomplete(interaction);
+      return;
+    }
     if (subcommand === "subagent") {
       if (focused.name === "child") {
         await this.#subagents.handleAutocomplete(interaction);

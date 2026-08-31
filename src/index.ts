@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { AssistantStreamingPublisher } from "./bridge/assistant-streaming-publisher.js";
 import { Bridge } from "./bridge/bridge.js";
+import { ExistingSessionRuntime } from "./bridge/existing-session-runtime.js";
 import { SubagentRuntime } from "./bridge/subagent-runtime.js";
 import { ToolSummaryPublisher } from "./bridge/tool-summary-publisher.js";
 import { loadConfig } from "./config.js";
@@ -13,6 +14,8 @@ import { PrometheusMetrics } from "./metrics/prometheus.js";
 import { MetricsServer } from "./metrics/server.js";
 import { OpenCodeChildSessionGateway } from "./opencode/child-session-gateway.js";
 import { OpenCodeSseMonitor, setOpenCodeHealthLogger } from "./opencode/diagnostics.js";
+import { ExistingSessionDiscovery } from "./opencode/existing-session-discovery.js";
+import { OpenCodeExistingSessionGateway } from "./opencode/existing-session-gateway.js";
 import {
   type OpenCodeHostRuntime,
   OpenCodeHostRuntimeRegistry,
@@ -93,6 +96,12 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
       username: host.username,
       ...(host.password ? { password: host.password } : {}),
     }),
+    existingSessions: new OpenCodeExistingSessionGateway({
+      hostId: host.id,
+      baseUrl: host.baseUrl,
+      username: host.username,
+      ...(host.password ? { password: host.password } : {}),
+    }),
     todo: new OpenCodeTodoGateway({
       baseUrl: host.baseUrl,
       username: host.username,
@@ -104,6 +113,14 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
 });
 
 const hosts = new OpenCodeHostRuntimeRegistry(defaultHostId, hostRuntimes);
+const existingSessionDiscovery = new ExistingSessionDiscovery(
+  (hostId) => hosts.get(hostId).existingSessions,
+  state,
+);
+const existingSessionRuntime = new ExistingSessionRuntime({
+  hosts,
+  discovery: existingSessionDiscovery,
+});
 const subagentInspector = new SubagentInspector({
   gatewayFor: (hostId) => hosts.get(hostId).child,
   todoGatewayFor: (hostId) => hosts.get(hostId).todo,
@@ -125,6 +142,7 @@ const bridge = new Bridge({
   config,
   state,
   hosts,
+  existingSessions: existingSessionRuntime,
   logger: bridgeLogger,
   subagentInspector,
   subagents: new SubagentRuntime({
