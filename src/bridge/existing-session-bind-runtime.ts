@@ -11,7 +11,7 @@ import type { SessionBinding } from "../domain/session-binding.js";
 import type { LoggerLike } from "../logging/logger.js";
 import type { ExistingSessionScope } from "../opencode/existing-session-discovery.js";
 import type { ExistingSession } from "../opencode/existing-session-gateway.js";
-import { runManagedPanelMutation } from "./session-lifecycle.js";
+import { runManagedPanelMutation, type SessionLifecycleSerializer } from "./session-lifecycle.js";
 
 type Host = Readonly<{
   id: string;
@@ -72,6 +72,7 @@ export class ExistingSessionBindRuntime {
   readonly #subagents: Panels & { forgetBinding(binding: SessionBinding): void };
   readonly #logger: LoggerLike;
   readonly #invalidate: (scope: ExistingSessionScope) => void;
+  readonly #lifecycle: Pick<SessionLifecycleSerializer, "run">;
   readonly #now: () => Date;
   readonly #serial = new Map<string, Promise<void>>();
 
@@ -85,6 +86,7 @@ export class ExistingSessionBindRuntime {
     subagents: Panels & { forgetBinding(binding: SessionBinding): void };
     logger: LoggerLike;
     invalidate: (scope: ExistingSessionScope) => void;
+    lifecycle: Pick<SessionLifecycleSerializer, "run">;
     now?: () => Date;
   }) {
     this.#hosts = options.hosts;
@@ -96,6 +98,7 @@ export class ExistingSessionBindRuntime {
     this.#subagents = options.subagents;
     this.#logger = options.logger;
     this.#invalidate = options.invalidate;
+    this.#lifecycle = options.lifecycle;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -136,22 +139,6 @@ export class ExistingSessionBindRuntime {
       await interaction.editReply(FAILED);
       return;
     }
-
-    const { binding } = result;
-    this.#invalidate({ hostId: binding.hostId, canonicalDirectory: binding.directory });
-    this.#logger.info("session.bound", "Existing OpenCode session bound", safeFields(binding));
-    await interaction
-      .editReply(
-        `Bound <#${binding.threadId}> to OpenCode host ${renderCanonicalIdentifier(binding.hostId)}, session ${renderCanonicalIdentifier(binding.sessionId)}.`,
-      )
-      .catch((error) => {
-        this.#logger.warn(
-          "discord.bind_reply_failed",
-          "Committed bind reply could not be edited",
-          safeFields(binding),
-          error,
-        );
-      });
   }
 
   async #bindCurrent(
@@ -163,47 +150,71 @@ export class ExistingSessionBindRuntime {
   ): Promise<BindResult> {
     if (this.#state.getBySession(host.id, selector)) return { kind: "already-bound" };
 
-    let thread: ThreadChannel | undefined;
-    let binding: SessionBinding | undefined;
-    let claimed = false;
+    let parent: Parent;
+    let thread: ThreadChannel;
     try {
-      const parent = await this.#parent();
+      parent = await this.#parent();
       const firstTitle = title(first);
       thread = await parent.threads.create({
         name: sanitizeThreadName(firstTitle),
         autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
         reason: "Binding an existing OpenCode session",
       });
+    } catch {
+      return { kind: "failed" };
+    }
 
-      const second = await host.existingSessions.getSession(directory, selector);
-      if (!eligible(second, host.id, directory, selector)) throw new BindFailure();
-      if (this.#state.getBySession(host.id, selector)) throw new AlreadyBound();
+    return this.#lifecycle.run(thread.id, async () => {
+      let binding: SessionBinding | undefined;
+      let claimed = false;
+      try {
+        const second = await host.existingSessions.getSession(directory, selector);
+        if (!eligible(second, host.id, directory, selector)) throw new BindFailure();
+        if (this.#state.getBySession(host.id, selector)) throw new AlreadyBound();
 
-      binding = {
-        threadId: thread.id,
-        parentChannelId: parent.id,
-        hostId: host.id,
-        sessionId: selector,
-        directory,
-        title: title(second),
-        createdBy: interaction.user.id,
-        createdAt: this.#now().toISOString(),
-      };
-      claimed = await this.#state.claimBindingIfSessionUnbound(binding);
-      if (!claimed) throw new AlreadyBound();
+        const candidate: SessionBinding = {
+          threadId: thread.id,
+          parentChannelId: parent.id,
+          hostId: host.id,
+          sessionId: selector,
+          directory,
+          title: title(second),
+          createdBy: interaction.user.id,
+          createdAt: this.#now().toISOString(),
+        };
+        binding = candidate;
+        claimed = await this.#state.claimBindingIfSessionUnbound(candidate);
+        if (!claimed) throw new AlreadyBound();
 
-      await this.#headers.createInitialHeader(binding, thread);
-      await this.#todos.refreshInitial(binding);
-      await this.#subagents.refreshInitial(binding);
-      await this.#headers.refreshSession(binding.hostId, binding.sessionId);
-      return { kind: "bound", binding };
-    } catch (error) {
-      if (thread) {
+        await this.#headers.createInitialHeader(candidate, thread);
+        await this.#todos.refreshInitial(candidate);
+        await this.#subagents.refreshInitial(candidate);
+        await this.#headers.refreshSession(candidate.hostId, candidate.sessionId);
+        this.#invalidate({ hostId: candidate.hostId, canonicalDirectory: candidate.directory });
+        this.#logger.info(
+          "session.bound",
+          "Existing OpenCode session bound",
+          safeFields(candidate),
+        );
+        await interaction
+          .editReply(
+            `Bound <#${candidate.threadId}> to OpenCode host ${renderCanonicalIdentifier(candidate.hostId)}, session ${renderCanonicalIdentifier(candidate.sessionId)}.`,
+          )
+          .catch((error) => {
+            this.#logger.warn(
+              "discord.bind_reply_failed",
+              "Committed bind reply could not be edited",
+              safeFields(candidate),
+              error,
+            );
+          });
+        return { kind: "bound", binding: candidate };
+      } catch (error) {
         if (claimed && binding) await this.#rollbackClaim(binding, thread);
         else await this.#deleteThread(thread, host.id, selector);
+        return error instanceof AlreadyBound ? { kind: "already-bound" } : { kind: "failed" };
       }
-      return error instanceof AlreadyBound ? { kind: "already-bound" } : { kind: "failed" };
-    }
+    });
   }
 
   #host(id: string | null): Host | undefined {

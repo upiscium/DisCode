@@ -1,3 +1,5 @@
+import type { SessionBinding } from "../domain/session-binding.js";
+
 export type LifecycleStatus = "busy" | "retry" | "idle" | undefined;
 
 export type LifecycleBlockReason =
@@ -16,6 +18,25 @@ export type UnbindMutationOperations = {
 type BindingMutationSerializer = {
   runBindingMutation<T>(threadId: string, operation: () => Promise<T>): Promise<T>;
 };
+
+/** Serializes top-level lifecycle transactions without reusing managed-panel queues. */
+export class SessionLifecycleSerializer {
+  readonly #queues = new Map<string, Promise<void>>();
+
+  run<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.#queues.get(threadId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    const settled = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#queues.set(threadId, settled);
+    void settled.then(() => {
+      if (this.#queues.get(threadId) === settled) this.#queues.delete(threadId);
+    });
+    return current;
+  }
+}
 
 export function lifecycleBlockReason(
   status: LifecycleStatus,
@@ -52,5 +73,40 @@ export function runManagedPanelMutation<T>(
 ): Promise<T> {
   return todos.runBindingMutation(threadId, () =>
     subagents.runBindingMutation(threadId, operation),
+  );
+}
+
+export function runCurrentManagedLifecycleMutation<T>(options: {
+  binding: SessionBinding;
+  currentBinding: (threadId: string) => SessionBinding | undefined;
+  lifecycle: Pick<SessionLifecycleSerializer, "run">;
+  todos: BindingMutationSerializer;
+  subagents: BindingMutationSerializer;
+  operation: () => Promise<T>;
+}): Promise<{ current: false } | { current: true; result: T }> {
+  return options.lifecycle.run(options.binding.threadId, async () => {
+    if (!sameLifecycleBinding(options.currentBinding(options.binding.threadId), options.binding)) {
+      return { current: false };
+    }
+    const result = await runManagedPanelMutation(
+      options.binding.threadId,
+      options.todos,
+      options.subagents,
+      options.operation,
+    );
+    return { current: true, result };
+  });
+}
+
+function sameLifecycleBinding(
+  current: SessionBinding | undefined,
+  expected: SessionBinding,
+): boolean {
+  return (
+    current?.threadId === expected.threadId &&
+    current.hostId === expected.hostId &&
+    current.sessionId === expected.sessionId &&
+    current.directory === expected.directory &&
+    current.createdAt === expected.createdAt
   );
 }

@@ -1,6 +1,12 @@
 import { ChannelType, MessageFlags } from "discord.js";
 import { describe, expect, it, vi } from "vitest";
 import { ExistingSessionBindRuntime } from "../src/bridge/existing-session-bind-runtime.js";
+import {
+  executeCloseMutation,
+  executeUnbindMutation,
+  runCurrentManagedLifecycleMutation,
+  SessionLifecycleSerializer,
+} from "../src/bridge/session-lifecycle.js";
 import type { SessionBinding } from "../src/domain/session-binding.js";
 import type { ExistingSession } from "../src/opencode/existing-session-gateway.js";
 
@@ -160,6 +166,7 @@ function fixture(
     error: vi.fn(),
   };
   const invalidate = vi.fn((_scope: unknown) => undefined);
+  const lifecycle = new SessionLifecycleSerializer();
   const runtime = new ExistingSessionBindRuntime({
     hosts: {
       has: (id) => hostsById.has(id),
@@ -182,6 +189,7 @@ function fixture(
     subagents,
     logger,
     invalidate,
+    lifecycle,
     now: () => new Date(CREATED_AT),
   });
   return {
@@ -197,6 +205,7 @@ function fixture(
     subagents,
     logger,
     invalidate,
+    lifecycle,
   };
 }
 
@@ -705,5 +714,121 @@ describe("ExistingSessionBindRuntime session-key serialization", () => {
 
     expect(item.createThread).toHaveBeenCalledTimes(2);
     expect(item.state.bindings).toHaveLength(1);
+  });
+});
+
+describe("ExistingSessionBindRuntime shared lifecycle serialization", () => {
+  it("holds unbind behind managed initialization after the claim", async () => {
+    const gate = deferred();
+    const item = fixture();
+    item.headers.createInitialHeader.mockImplementationOnce(async () => {
+      await gate.promise;
+    });
+    const command = interaction();
+    const bind = item.runtime.handleCommand(command as never);
+    await vi.waitFor(() => expect(item.state.bindings).toHaveLength(1));
+    await vi.waitFor(() => expect(item.headers.createInitialHeader).toHaveBeenCalledTimes(1));
+    const binding = item.state.bindings[0] as SessionBinding;
+    const unbindMutation = vi.fn(async () => {
+      await executeUnbindMutation({
+        removeBinding: async () => {
+          await item.state.removeBindingIfMatches("thread-1", "adam", "ses_fab083_abc");
+        },
+      });
+    });
+    const unbind = runCurrentManagedLifecycleMutation({
+      binding,
+      currentBinding: (threadId) =>
+        item.state.bindings.find((candidate) => candidate.threadId === threadId),
+      lifecycle: item.lifecycle,
+      todos: item.todos,
+      subagents: item.subagents,
+      operation: unbindMutation,
+    });
+
+    await Promise.resolve();
+    expect(unbindMutation).not.toHaveBeenCalled();
+    expect(item.state.bindings).toHaveLength(1);
+
+    gate.resolve();
+    await bind;
+    expect(command.editReply).toHaveBeenCalledWith(expect.stringContaining("Bound <#thread-1>"));
+    await unbind;
+    expect(unbindMutation).toHaveBeenCalledTimes(1);
+    expect(item.state.bindings).toHaveLength(0);
+  });
+
+  it("holds close behind managed initialization after the claim", async () => {
+    const gate = deferred();
+    const item = fixture();
+    item.headers.createInitialHeader.mockImplementationOnce(async () => {
+      await gate.promise;
+    });
+    const bind = item.runtime.handleCommand(interaction() as never);
+    await vi.waitFor(() => expect(item.state.bindings).toHaveLength(1));
+    await vi.waitFor(() => expect(item.headers.createInitialHeader).toHaveBeenCalledTimes(1));
+    const binding = item.state.bindings[0] as SessionBinding;
+    const deleteSession = vi.fn(async () => undefined);
+    const closeMutation = vi.fn(async () => {
+      await executeCloseMutation({
+        deleteSession,
+        removeBinding: async () => {
+          await item.state.removeBindingIfMatches("thread-1", "adam", "ses_fab083_abc");
+        },
+      });
+    });
+    const close = runCurrentManagedLifecycleMutation({
+      binding,
+      currentBinding: (threadId) =>
+        item.state.bindings.find((candidate) => candidate.threadId === threadId),
+      lifecycle: item.lifecycle,
+      todos: item.todos,
+      subagents: item.subagents,
+      operation: closeMutation,
+    });
+
+    await Promise.resolve();
+    expect(closeMutation).not.toHaveBeenCalled();
+    expect(deleteSession).not.toHaveBeenCalled();
+
+    gate.resolve();
+    await bind;
+    await close;
+    expect(closeMutation).toHaveBeenCalledTimes(1);
+    expect(deleteSession).toHaveBeenCalledTimes(1);
+    expect(item.state.bindings).toHaveLength(0);
+  });
+
+  it("releases the lifecycle lock after failed bind rollback", async () => {
+    const gate = deferred();
+    const item = fixture();
+    item.headers.createInitialHeader.mockImplementationOnce(async () => {
+      await gate.promise;
+      throw new Error("initialization failed");
+    });
+    const bind = item.runtime.handleCommand(interaction() as never);
+    await vi.waitFor(() => expect(item.state.bindings).toHaveLength(1));
+    await vi.waitFor(() => expect(item.headers.createInitialHeader).toHaveBeenCalledTimes(1));
+    const binding = item.state.bindings[0] as SessionBinding;
+    const laterMutation = vi.fn(async () => undefined);
+    const later = runCurrentManagedLifecycleMutation({
+      binding,
+      currentBinding: (threadId) =>
+        item.state.bindings.find((candidate) => candidate.threadId === threadId),
+      lifecycle: item.lifecycle,
+      todos: item.todos,
+      subagents: item.subagents,
+      operation: laterMutation,
+    });
+
+    await Promise.resolve();
+    expect(laterMutation).not.toHaveBeenCalled();
+
+    gate.resolve();
+    await bind;
+    await expect(later).resolves.toEqual({ current: false });
+    expect(item.state.bindings).toHaveLength(0);
+    expect(item.threads[0]?.delete).toHaveBeenCalledTimes(1);
+    expect(laterMutation).not.toHaveBeenCalled();
   });
 });

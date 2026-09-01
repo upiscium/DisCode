@@ -55,7 +55,9 @@ import {
   executeUnbindMutation,
   lifecycleBlockReason,
   renderLifecycleBlock,
+  runCurrentManagedLifecycleMutation,
   runManagedPanelMutation,
+  SessionLifecycleSerializer,
 } from "./session-lifecycle.js";
 import { SubagentPanelManager } from "./subagent-panel-manager.js";
 import type { SubagentCommandRuntime } from "./subagent-runtime.js";
@@ -75,6 +77,7 @@ export class Bridge {
   readonly #abortController = new AbortController();
   readonly #permissions = new PermissionPublicationTracker();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
+  readonly #lifecycle = new SessionLifecycleSerializer();
   readonly #existingSessions: ExistingSessionCommandRuntime;
   readonly #sessionHeaders: SessionHeaderManager;
   readonly #subagents: SubagentCommandRuntime;
@@ -138,6 +141,7 @@ export class Bridge {
       subagents: this.#subagentSync,
       logger: this.#logger,
       invalidate: (scope) => this.#existingSessions.invalidateAutocomplete(scope),
+      lifecycle: this.#lifecycle,
     });
   }
 
@@ -670,13 +674,26 @@ export class Bridge {
       return;
     }
 
-    await runManagedPanelMutation(binding.threadId, this.#todos, this.#subagentSync, async () => {
-      await executeCloseMutation({
-        deleteSession: () => runtime.gateway.deleteSession(binding.directory, binding.sessionId),
-        removeBinding: () => this.#state.remove(binding.threadId),
-      });
-      this.#subagentSync.forgetBinding(binding);
+    const closed = await runCurrentManagedLifecycleMutation({
+      binding,
+      currentBinding: (threadId) => this.#state.getByThread(threadId),
+      lifecycle: this.#lifecycle,
+      todos: this.#todos,
+      subagents: this.#subagentSync,
+      operation: async () => {
+        await executeCloseMutation({
+          deleteSession: () => runtime.gateway.deleteSession(binding.directory, binding.sessionId),
+          removeBinding: () => this.#state.remove(binding.threadId),
+        });
+        this.#subagentSync.forgetBinding(binding);
+      },
     });
+    if (!closed.current) {
+      await interaction.editReply(
+        "This Discord thread is no longer bound to that OpenCode session.",
+      );
+      return;
+    }
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.closed", "OpenCode session closed", {
@@ -736,12 +753,25 @@ export class Bridge {
       return;
     }
 
-    await runManagedPanelMutation(binding.threadId, this.#todos, this.#subagentSync, async () => {
-      await executeUnbindMutation({
-        removeBinding: () => this.#state.remove(binding.threadId),
-      });
-      this.#subagentSync.forgetBinding(binding);
+    const unbound = await runCurrentManagedLifecycleMutation({
+      binding,
+      currentBinding: (threadId) => this.#state.getByThread(threadId),
+      lifecycle: this.#lifecycle,
+      todos: this.#todos,
+      subagents: this.#subagentSync,
+      operation: async () => {
+        await executeUnbindMutation({
+          removeBinding: () => this.#state.remove(binding.threadId),
+        });
+        this.#subagentSync.forgetBinding(binding);
+      },
     });
+    if (!unbound.current) {
+      await interaction.editReply(
+        "This Discord thread is no longer bound to that OpenCode session.",
+      );
+      return;
+    }
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
     this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.unbound", "Discord thread unbound from OpenCode session", {
