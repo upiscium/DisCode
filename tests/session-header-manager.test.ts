@@ -19,7 +19,20 @@ const baseBinding = {
   agent: "review",
 };
 
-async function fixture(options?: { headerMessageId?: string; existingContent?: string }) {
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function fixture(options?: {
+  headerMessageId?: string;
+  existingContent?: string;
+  contextGate?: ReturnType<typeof deferred>;
+  sendGate?: ReturnType<typeof deferred>;
+}) {
   const dir = await mkdtemp(join(tmpdir(), "ocdb-header-"));
   const state = new StateStore(join(dir, "state.json"), "local");
   await state.load();
@@ -29,14 +42,16 @@ async function fixture(options?: { headerMessageId?: string; existingContent?: s
   });
 
   const edit = vi.fn(async (_options: { content: string; allowedMentions?: unknown }) => undefined);
+  const deleteMessage = vi.fn(async () => undefined);
   const fetchMessage = vi.fn(async () => ({
     id: options?.headerMessageId ?? "header-1",
     content: options?.existingContent ?? "old header",
     edit,
   }));
-  const send = vi.fn(async (_options: { content: string; allowedMentions?: unknown }) => ({
-    id: "created-header",
-  }));
+  const send = vi.fn(async (_options: { content: string; allowedMentions?: unknown }) => {
+    await options?.sendGate?.promise;
+    return { id: "created-header", delete: deleteMessage };
+  });
   const thread = {
     isThread: () => true,
     messages: { fetch: fetchMessage },
@@ -46,11 +61,14 @@ async function fixture(options?: { headerMessageId?: string; existingContent?: s
     channels: { fetch: vi.fn(async () => thread) },
   };
   const opencode = {
-    sessionHeaderContext: vi.fn(async () => ({
-      agent: "build",
-      model: { providerID: "openai", modelID: "gpt-5.6" },
-      branch: "feat/header",
-    })),
+    sessionHeaderContext: vi.fn(async () => {
+      await options?.contextGate?.promise;
+      return {
+        agent: "build",
+        model: { providerID: "openai", modelID: "gpt-5.6" },
+        branch: "feat/header",
+      };
+    }),
   };
 
   const manager = new SessionHeaderManager({
@@ -61,7 +79,7 @@ async function fixture(options?: { headerMessageId?: string; existingContent?: s
       return opencode as never;
     },
   });
-  return { manager, state, send, fetchMessage, edit };
+  return { manager, state, send, fetchMessage, edit, deleteMessage, opencode };
 }
 
 describe("SessionHeaderManager", () => {
@@ -114,5 +132,82 @@ describe("SessionHeaderManager", () => {
     expect(edit.mock.calls[0]?.[0]?.content).toContain("Branch: `feat/header`");
     expect(edit.mock.calls[0]?.[0]?.content).toContain("Latest actual agent: `build`");
     expect(edit.mock.calls[0]?.[0]?.content).toContain("Discord agent preference: `review`");
+  });
+
+  it("serializes an initial create behind a concurrent refresh", async () => {
+    const contextGate = deferred();
+    const { manager, send } = await fixture({ contextGate });
+
+    const refresh = manager.refreshSession("local", "session-1");
+    await vi.waitFor(() => expect(send).not.toHaveBeenCalled());
+    const initial = manager.createInitialHeader(baseBinding, {
+      send,
+      isThread: () => true,
+      messages: { fetch: vi.fn() },
+    } as never);
+    contextGate.resolve();
+
+    await Promise.all([refresh, initial]);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not publish a refresh after its binding is removed during OpenCode I/O", async () => {
+    const contextGate = deferred();
+    const { manager, state, send, opencode } = await fixture({ contextGate });
+
+    const refresh = manager.refreshSession("local", "session-1");
+    await vi.waitFor(() => expect(opencode.sessionHeaderContext).toHaveBeenCalledTimes(1));
+    await state.remove("thread-1");
+    contextGate.resolve();
+    await refresh;
+
+    expect(send).not.toHaveBeenCalled();
+    expect(state.getByThread("thread-1")).toBeUndefined();
+  });
+
+  it("does not publish a refresh for a replacement binding", async () => {
+    const contextGate = deferred();
+    const { manager, state, send, opencode } = await fixture({ contextGate });
+
+    const refresh = manager.refreshSession("local", "session-1");
+    await vi.waitFor(() => expect(opencode.sessionHeaderContext).toHaveBeenCalledTimes(1));
+    await state.put({ ...baseBinding, directory: "/replacement" });
+    contextGate.resolve();
+    await refresh;
+
+    expect(send).not.toHaveBeenCalled();
+    expect(state.getByThread("thread-1")?.directory).toBe("/replacement");
+  });
+
+  it("does not persist an initial header after its binding is removed during Discord I/O", async () => {
+    const sendGate = deferred();
+    const { manager, state, send, deleteMessage } = await fixture({ sendGate });
+
+    const initial = manager.createInitialHeader(baseBinding, {
+      send,
+      isThread: () => true,
+      messages: { fetch: vi.fn() },
+    } as never);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    await state.remove("thread-1");
+    sendGate.resolve();
+    await initial;
+
+    expect(state.getByThread("thread-1")).toBeUndefined();
+    expect(deleteMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes a lazy refresh header when its binding is removed during Discord I/O", async () => {
+    const sendGate = deferred();
+    const { manager, state, send, deleteMessage } = await fixture({ sendGate });
+
+    const refresh = manager.refreshSession("local", "session-1");
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    await state.remove("thread-1");
+    sendGate.resolve();
+    await refresh;
+
+    expect(state.getByThread("thread-1")).toBeUndefined();
+    expect(deleteMessage).toHaveBeenCalledTimes(1);
   });
 });

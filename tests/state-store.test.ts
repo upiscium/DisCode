@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -77,6 +77,143 @@ describe("StateStore", () => {
 
     expect(store.getBySession("local", "session-1")?.threadId).toBe("thread-1");
     expect(store.getBySession("lab", "session-1")?.threadId).toBe("thread-2");
+  });
+
+  it("claims an unbound session and rejects a second claim on the same host", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+
+    expect(await store.claimBindingIfSessionUnbound(binding)).toBe(true);
+    expect(await store.claimBindingIfSessionUnbound({ ...binding, threadId: "thread-2" })).toBe(
+      false,
+    );
+    expect(store.getByThread("thread-1")).toEqual(binding);
+    expect(store.getByThread("thread-2")).toBeUndefined();
+  });
+
+  it("allows the same session id on another host and unrelated claims", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+
+    expect(await store.claimBindingIfSessionUnbound(binding)).toBe(true);
+    expect(
+      await store.claimBindingIfSessionUnbound({
+        ...binding,
+        threadId: "thread-2",
+        hostId: "lab",
+      }),
+    ).toBe(true);
+    expect(
+      await store.claimBindingIfSessionUnbound({
+        ...binding,
+        threadId: "thread-3",
+        sessionId: "session-3",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not overwrite an existing thread during a claim", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+
+    expect(await store.claimBindingIfSessionUnbound({ ...binding, sessionId: "session-2" })).toBe(
+      false,
+    );
+    expect(store.getByThread(binding.threadId)).toEqual(binding);
+  });
+
+  it("restores the previous state when claim persistence fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const path = join(dir, "state.json");
+    const store = new StateStore(path, "local");
+    await store.load();
+    await store.put(binding);
+    await unlink(path);
+    await mkdir(path);
+    // Replacing the destination with a directory makes the atomic rename fail.
+    const original = store.getByThread(binding.threadId);
+    await expect(
+      store.claimBindingIfSessionUnbound({
+        ...binding,
+        threadId: "thread-2",
+        sessionId: "session-2",
+      }),
+    ).rejects.toThrow();
+    expect(store.getByThread(binding.threadId)).toEqual(original);
+    expect(store.getByThread("thread-2")).toBeUndefined();
+  });
+
+  it("keeps put overwrite semantics", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+    await store.put({ ...binding, title: "updated" });
+    expect(store.getByThread(binding.threadId)?.title).toBe("updated");
+  });
+
+  it("keeps legacy put behavior for duplicate session identities", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+    await store.put({ ...binding, threadId: "thread-2" });
+
+    expect(store.getByThread("thread-1")?.sessionId).toBe("session-1");
+    expect(store.getByThread("thread-2")?.sessionId).toBe("session-1");
+  });
+
+  it("serializes concurrent claims", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+
+    await expect(
+      Promise.all([
+        store.claimBindingIfSessionUnbound(binding),
+        store.claimBindingIfSessionUnbound({ ...binding, threadId: "thread-2" }),
+      ]),
+    ).resolves.toEqual([true, false]);
+  });
+
+  it("removes a binding only when all identity fields match", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+
+    expect(await store.removeBindingIfMatches("thread-1", "local", "session-1")).toBe(true);
+    expect(store.getByThread("thread-1")).toBeUndefined();
+    expect(await store.removeBindingIfMatches("thread-1", "local", "session-1")).toBe(false);
+  });
+
+  it("does not remove a binding for a mismatched identity", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const store = new StateStore(join(dir, "state.json"), "local");
+    await store.load();
+    await store.put(binding);
+
+    expect(await store.removeBindingIfMatches("thread-1", "other-host", "session-1")).toBe(false);
+    expect(await store.removeBindingIfMatches("thread-1", "local", "other-session")).toBe(false);
+    expect(store.getByThread("thread-1")).toEqual(binding);
+  });
+
+  it("restores a binding when guarded removal persistence fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ocdb-state-"));
+    const path = join(dir, "state.json");
+    const store = new StateStore(path, "local");
+    await store.load();
+    await store.put(binding);
+    await unlink(path);
+    await mkdir(path);
+    const original = store.getByThread(binding.threadId);
+
+    await expect(store.removeBindingIfMatches("thread-1", "local", "session-1")).rejects.toThrow();
+    expect(store.getByThread(binding.threadId)).toEqual(original);
   });
 
   it("persists model and agent preferences without changing state version", async () => {

@@ -16,7 +16,6 @@ import type {
 const MAX_REPLY_LENGTH = 1_900;
 const FAILED = "Unable to inspect existing sessions right now.";
 const UNKNOWN_HOST = "Unknown configured OpenCode host.";
-const BIND_DISABLED = "Existing-session binding is not enabled in this implementation unit.";
 
 export type ExistingSessionHostRuntime = Readonly<{
   id: string;
@@ -31,7 +30,7 @@ export type ExistingSessionHosts = Readonly<{
 
 export type ExistingSessionCommandRuntime = Pick<
   ExistingSessionRuntime,
-  "handleSessionsCommand" | "handleBindAutocomplete" | "handleBindCommand"
+  "handleSessionsCommand" | "handleBindAutocomplete" | "invalidateAutocomplete"
 >;
 
 type Discovery = Pick<ExistingSessionDiscovery, "discover">;
@@ -54,6 +53,10 @@ export class ExistingSessionAutocompleteCache {
     this.#ttlMs = positiveInteger(options.ttlMs ?? 2_000, "ttlMs");
     this.#maxEntries = positiveInteger(options.maxEntries ?? 64, "maxEntries");
     this.#now = options.now ?? Date.now;
+  }
+
+  invalidate(scope: ExistingSessionScope): void {
+    this.#entries.delete(JSON.stringify([scope.hostId, scope.canonicalDirectory]));
   }
 
   getOrDiscover(
@@ -154,8 +157,8 @@ export class ExistingSessionRuntime {
     }
   }
 
-  async handleBindCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.reply({ content: bound(BIND_DISABLED), flags: MessageFlags.Ephemeral });
+  invalidateAutocomplete(scope: ExistingSessionScope): void {
+    this.#cache.invalidate(scope);
   }
 
   #host(id: string | null): ExistingSessionHostRuntime | undefined {

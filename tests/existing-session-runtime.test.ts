@@ -193,20 +193,6 @@ describe("ExistingSessionRuntime sessions command", () => {
     expect(first.editReply).not.toHaveBeenCalledWith(expect.stringContaining("ses_adam"));
     expect(cacheGet).not.toHaveBeenCalled();
   });
-
-  it("keeps bind execution disabled without reading or mutating a session", async () => {
-    const { runtime, discover } = runtimeFixture();
-    const command = interaction();
-
-    await runtime.handleBindCommand(command as never);
-
-    expect(command.reply).toHaveBeenCalledWith({
-      content: "Existing-session binding is not enabled in this implementation unit.",
-      flags: MessageFlags.Ephemeral,
-    });
-    expect(command.options.getString).not.toHaveBeenCalled();
-    expect(discover).not.toHaveBeenCalled();
-  });
 });
 
 describe("ExistingSessionRuntime bind autocomplete", () => {
@@ -362,6 +348,20 @@ describe("ExistingSessionAutocompleteCache", () => {
     await cache.getOrDiscover(scope, discover);
     await cache.getOrDiscover({ ...scope, hostId: "eve" }, discover);
     await cache.getOrDiscover({ ...scope, canonicalDirectory: "/other" }, discover);
+
+    expect(discover).toHaveBeenCalledTimes(3);
+  });
+
+  it("invalidates only the exact host and canonical-directory scope", async () => {
+    const cache = new ExistingSessionAutocompleteCache();
+    const discover = vi.fn(async () => [session()]);
+    const other = { hostId: "eve", canonicalDirectory: "/canonical/repo" };
+
+    await cache.getOrDiscover(scope, discover);
+    await cache.getOrDiscover(other, discover);
+    cache.invalidate(scope);
+    await cache.getOrDiscover(scope, discover);
+    await cache.getOrDiscover(other, discover);
 
     expect(discover).toHaveBeenCalledTimes(3);
   });

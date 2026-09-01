@@ -42,6 +42,7 @@ import type {
 import { validateOpenCodeSelection } from "../opencode/selection-validation.js";
 import type { SubagentInspector } from "../opencode/subagent-inspector.js";
 import type { StateStore } from "../state/state-store.js";
+import { ExistingSessionBindRuntime } from "./existing-session-bind-runtime.js";
 import type { ExistingSessionCommandRuntime } from "./existing-session-runtime.js";
 import {
   hasPendingPermissionRequest,
@@ -79,6 +80,7 @@ export class Bridge {
   readonly #subagents: SubagentCommandRuntime;
   readonly #subagentSync: SubagentSyncRuntime;
   readonly #todos: TodoRuntime;
+  readonly #existingSessionBind: ExistingSessionBindRuntime;
 
   constructor(options: {
     config: AppConfig;
@@ -125,6 +127,17 @@ export class Bridge {
         inspector: options.subagentInspector,
       }),
       logger: this.#logger,
+    });
+    this.#existingSessionBind = new ExistingSessionBindRuntime({
+      hosts: this.#hosts,
+      state: this.#state,
+      discord: this.#discord,
+      config: this.#config,
+      headers: this.#sessionHeaders,
+      todos: this.#todos,
+      subagents: this.#subagentSync,
+      logger: this.#logger,
+      invalidate: (scope) => this.#existingSessions.invalidateAutocomplete(scope),
     });
   }
 
@@ -266,7 +279,7 @@ export class Bridge {
         await this.#existingSessions.handleSessionsCommand(interaction);
         break;
       case "bind":
-        await this.#existingSessions.handleBindCommand(interaction);
+        await this.#existingSessionBind.handleCommand(interaction);
         break;
       case "model":
         await this.#setModel(interaction);
