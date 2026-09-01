@@ -10,9 +10,9 @@ Each configured OpenCode server is the authoritative owner of its sessions, mode
 
 Process and interactive-terminal persistence only. A local helper can keep `opencode serve` alive and may host `opencode attach` windows for SSH operators. tmux is not used as a transport protocol, and Discord does not remotely control tmux on other hosts.
 
-### OpenCodeDiscordBridge
+### DisCode
 
-A narrow adapter between Discord and configured OpenCode hosts:
+DisCode is a narrow adapter between Discord and configured OpenCode hosts:
 
 - authenticates/authorizes Discord operators;
 - resolves a stable operator-configured host ID;
@@ -109,6 +109,60 @@ For every configured host, allowed-root authorization uses that OpenCode server 
 
 A path outside those roots, a symlink escape, an inaccessible path, or an invalid OpenCode response fails closed before session creation or selection autocomplete.
 
+## Existing-session bind authority
+
+`/oc bind` treats autocomplete as a memory-only UX optimization, never as an authority or a reservation. Its authoritative flow is:
+
+```text
+short-lived autocomplete cache
+          |
+          +---- UX selector only
+          X
+     bind authority
+```
+
+```text
+/oc bind host:<configured-id> directory:<requested> session:<id>
+  -> resolve configured host (default only when host is omitted)
+  -> OpenCode GET /path: canonicalize directory on the selected host
+  -> OpenCode GET /file for path=. at the canonical directory: require accessible exact directory
+  -> first OpenCode session lookup at (host, canonical directory, exact session id)
+  -> require host and exact id match
+  -> require session.directory == canonical directory
+  -> require parentId is absent (root session) and archivedAt is absent (unarchived)
+  -> host/session bind serializer
+       -> create Discord thread from the first lookup's title
+       -> second OpenCode session lookup at the same exact host/directory/id
+       -> repeat root, unarchived, exact-directory, host, and exact-id checks
+       -> StateStore mutation queue: guarded claim only if session and thread are unbound
+       -> reconstruct Discord projections from the claimed binding:
+            managed header (initial header, then session refresh)
+            TODO panel refresh
+            SubAgent panel refresh
+            pending Question and Permission reconciliation
+       -> invalidate the memory-only autocomplete cache
+       -> report the committed binding
+```
+
+The second lookup closes the gap between discovery/autocomplete and the mutation. The guarded claim is the authority for competing binds; a stale choice or a concurrent claim cannot become a binding merely because it appeared in autocomplete. Failure of a critical claim/header/history step rolls back the guarded binding and newly created Discord thread. TODO, SubAgent, and pending-request refresh paths are bounded and recoverable, so their temporary failure does not destroy an otherwise coherent binding. Compensation never deletes the existing OpenCode session, and failure before claim likewise leaves it untouched.
+
+## Concurrency model
+
+Concurrency is layered deliberately:
+
+```text
+host/session bind serializer: (hostId, sessionId)
+  -> serializes competing existing-session binds
+top-level per-thread SessionLifecycleSerializer
+  -> serializes bind, close, and unbind transactions for one Discord thread
+inner managed-panel queues
+  -> TODO queue and SubAgent queue serialize their own Discord projections
+StateStore mutation queue
+  -> serializes JSON mutations; claim is guarded against current session/thread ownership
+```
+
+Lifecycle operations enter the per-thread serializer before the inner TODO/SubAgent queues; managed-panel mutations use the fixed TODO-then-SubAgent nesting. StateStore remains the persistence/claim boundary, and each panel rechecks the current binding before publishing. The lifecycle serializer is separate from the panel queues so a panel refresh cannot wait on a lifecycle operation that is waiting on that same panel queue; the fixed nesting prevents TODO/SubAgent lock inversion. Thus serialization protects lifecycle identity and Discord projections without making a Discord panel or autocomplete cache authoritative.
+
 ## Model / agent selection authority
 
 Discord selection is intentionally constrained to an already-authorized `(hostId, canonical directory)` boundary.
@@ -136,7 +190,7 @@ Missing actual history is rendered as `(not observed yet)`. An unset Bridge pref
 
 ## Failure semantics
 
-Creating a session is a two-system operation. If Discord thread creation or binding persistence fails after the OpenCode session was created, the bridge attempts compensation by deleting the new thread and the session on the same selected host.
+Starting a new session is a two-system operation. If Discord thread creation or binding persistence fails after `/oc start` creates an OpenCode session, the bridge attempts compensation by deleting the new thread and that newly created session on the same selected host. Existing-session `/oc bind` has different compensation: it may delete only its newly created Discord thread and guarded binding; it never deletes the pre-existing OpenCode session.
 
 For normal operation, the state file is updated atomically by writing a temporary file and renaming it into place. Model and agent preferences are optional independent fields: changing one preserves the other.
 
@@ -144,13 +198,58 @@ An OpenCode event-stream disconnect is isolated to that host. Each gateway recon
 
 Health probing is also isolated per host. `/oc health` probes all configured hosts concurrently; an unreachable or invalid host becomes a degraded entry without suppressing healthy results from other hosts.
 
-Pending question state is keyed by `(hostId, sessionId)`. Permission publication state is keyed by `(hostId, permission ID)` and reserves an entry before Discord send, so startup reconciliation and live SSE cannot publish the same request concurrently. A failed Discord send rolls that reservation back. OpenCode remains the source of truth for whether either request is still pending.
+Active pending-question state is keyed by `(hostId, sessionId)`, while Question publication coordination is keyed by `(hostId, request ID)`. Permission publication coordination is keyed by `(hostId, permission ID)`. Both trackers reserve an entry before Discord send, so startup/bind reconciliation and live SSE cannot publish the same request concurrently. A failed Discord send rolls that reservation back. OpenCode remains the source of truth for whether either request is still pending.
 
-Pending question and permission requests are queried per host during Bridge startup after the per-host SSE consumers start. Permission reconciliation derives only bound directories from persisted state, calls the selected host's authenticated `GET /permission?directory=...`, and surfaces a request only when host ID, session ID, and directory all match one persisted binding. Permission requests themselves are not persisted.
+Pending question and permission requests are queried per host during Bridge startup after the per-host SSE consumers start, and again for the exact new binding during `/oc bind`. Reconciliation derives only bound directories, queries the selected host's current Question/Permission APIs, and surfaces a request only when host ID, session ID, and directory all match one binding. Request bodies and tracker state are not persisted.
 
 Before a Discord permission button sends a reply, the Bridge queries the selected OpenCode host again and confirms the same request is still pending. A request resolved by another OpenCode client is therefore rejected as stale rather than replayed. Reconciliation failures are isolated and logged as `opencode.permission_reconcile_failed` with bounded `host_id` context only.
 
 If persisted state references a host ID that no longer exists in the registry, startup fails rather than silently rerouting that binding to another server.
+
+### Question and Permission convergence
+
+Questions and permissions are transient OpenCode requests. Their request content and Discord projection are held in memory; the JSON state file persists binding metadata and prompt preferences, not pending request bodies, answers, permission requests, or message content.
+
+```text
+Question: OpenCode SSE question.asked
+  -> key by (hostId, requestId)
+  -> QuestionPublicationTracker reserves/publishes once
+  -> Discord Ask in the bound thread
+  -> in-memory pending-question map records (hostId, sessionId) -> request
+  -> question.replied / question.rejected, or successful Discord answer
+       -> clear pending map and tracker entry
+  -> failed Discord send: tracker reservation is removed; request remains OpenCode authority
+```
+
+```text
+Question: startup or bind reconciliation
+  -> list pending questions per selected host and each bound canonical directory
+  -> accept only a matching (hostId, sessionId, exact directory) binding
+  -> same QuestionPublicationTracker publication path as live SSE
+  -> converge to one in-memory pending request and one Discord Ask
+  -> later OpenCode reply/reject or cleanup clears transient state
+```
+
+```text
+Permission: OpenCode SSE permission.updated
+  -> key by (hostId, permission id)
+  -> PermissionPublicationTracker reserves/publishes once
+  -> Discord one-shot permission controls in the matching bound thread
+  -> before a button reply, query OpenCode again for the same pending request
+  -> resolve successfully, or reject as stale when another client resolved it
+  -> clear tracker entry on resolution, stale request, failed send, or session cleanup
+```
+
+```text
+Permission: startup or bind reconciliation
+  -> list permissions per selected host and each bound canonical directory
+  -> accept only a matching (hostId, sessionId, exact directory) binding
+  -> same PermissionPublicationTracker publication path as live SSE
+  -> converge to one in-memory publication and one Discord control set
+  -> OpenCode remains authoritative; reconciliation failure is isolated
+```
+
+For Questions, malformed answers are reported without clearing the pending in-memory request; the next authorized text message can retry. A successful `replyQuestion` clears it. Attachments cannot answer a pending Ask. Neither tracker nor pending map is restored from JSON after restart; startup reconciliation repopulates them from OpenCode.
 
 ## Service/runtime lifecycle
 
@@ -259,7 +358,9 @@ Metrics collection does not alter OpenCode session/execution/permission state, d
       },
       "agent": "build",
       "lastPublishedAssistantMessageId": "msg_...",
-      "headerMessageId": "discord-message-id"
+      "headerMessageId": "discord-header-message-id",
+      "todoMessageId": "discord-todo-message-id",
+      "subagentPanelMessageId": "discord-subagent-message-id"
     }
   }
 }
@@ -269,4 +370,4 @@ Metrics collection does not alter OpenCode session/execution/permission state, d
 
 Legacy schema-v1 bindings without `hostId` are migrated to the configured default host when the state file is loaded, then written back in host-aware form. Existing schema-v1 bindings without `model` or `agent` require no migration and continue to mean OpenCode default behavior. The schema version remains 1 because these are additive fields.
 
-No token, password, provider credential, or raw catalog payload belongs in this file.
+The managed-message IDs are routing pointers, not panel content. Question text/answers, Permission payloads, TODO content, SubAgent transcript/metadata, raw tool input/output, prompt/attachment content, tokens, passwords, provider credentials, and raw catalog payloads do not belong in this file. Existing-session discovery/autocomplete caches and Question/Permission publication trackers are memory-only coordination and are never persisted.

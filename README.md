@@ -1,6 +1,6 @@
-# OpenCodeDiscordBridge
+# DisCode
 
-`OpenCodeDiscordBridge` is a small control plane that exposes OpenCode sessions through Discord threads without treating the terminal UI as an API.
+`DisCode` is a small control plane that exposes OpenCode sessions through Discord threads without treating the terminal UI as an API. Existing compatibility identifiers remain stable: the executable is `opencode-discord-bridge`, configuration uses the `OCB_`/`OPENCODE_` environment names, and the NixOS/systemd service and module remain `opencode-discord-bridge`.
 
 OpenCode servers are the source of truth. Local or remote OpenCode servers keep their own sessions authoritative, optional `opencode attach` clients provide TUI views, and this bridge is another API client through `@opencode-ai/sdk`.
 
@@ -26,6 +26,8 @@ OpenCode servers are the source of truth. Local or remote OpenCode servers keep 
 - `/oc health` probes every configured host in parallel and reports aggregate plus per-host HTTP/SSE readiness. Host IDs are shown; URLs and credentials are not.
 - Persisted JSON bindings include `hostId` plus optional model/agent prompt preferences, allowing the bridge to reconnect each Discord thread to the correct OpenCode host and preserve Discord selection preferences after restart. Legacy state-v1 bindings without `hostId` or selection fields remain backward compatible.
 
+The persisted binding metadata is limited to routing and presentation identifiers: `threadId`, `parentChannelId`, `hostId`, `sessionId`, canonical `directory`, fallback/title text, `createdBy`, `createdAt`, optional model preference (`providerID`/`modelID`), optional agent preference, `lastPublishedAssistantMessageId`, `headerMessageId`, `todoMessageId`, and `subagentPanelMessageId`. The latter message IDs are pointers only; they do not persist panel contents. OpenCode Questions and Permissions, TODO item text/status, SubAgent metadata or tool activity, prompts/answers/attachments, catalog payloads, and Discord/OpenCode credentials are explicitly not persisted.
+
 The managed session header deliberately separates `Latest actual model / agent` from `Discord model / agent preference`. Actual values come only from OpenCode message history. Preferences are Bridge-side instructions for the next Discord-origin prompt. Before any user message has established actual context, the header shows `(not observed yet)`; when no Discord preference is configured it shows `(OpenCode default)`.
 
 For a multi-question Ask, reply with one line per question; for a multi-select question, separate selections with commas. A **Reject Ask** button is also provided. Pending Ask and permission requests are reconciled per host when the bridge restarts. OpenCode remains the source of truth: the Bridge re-queries each bound directory and re-surfaces only requests that are still pending for the exact host/session/directory binding.
@@ -35,6 +37,43 @@ Assistant streaming is optional and disabled by default. When `DISCORD_STREAM_AS
 Tool-call summaries are also isolated per host so identical OpenCode session IDs on different hosts cannot cross-deliver preview or tool activity state.
 
 Discord attachments can be sent to an idle bound session as OpenCode FileParts. PNG, JPEG, WebP, GIF, PDF, and bounded UTF-8 text-like files are supported. The bridge accepts at most four attachments per message, 10 MiB per attachment, and 20 MiB total. Attachment bytes are fetched only from Discord attachment CDN URLs, validated in memory, converted to data URLs, and never written to the host filesystem. Archives, executables, unsupported binary files, redirects, and invalid media signatures are rejected. A pending Ask remains text-only. Explicit model/agent preferences are applied to attachment prompts through the same execution-time revalidation path used for text prompts.
+
+### Existing-session discovery and binding
+
+- `/oc sessions directory:<absolute-path> [host:<configured-id>]` authorizes the directory on the selected host and then freshly lists current eligible OpenCode root sessions in that exact scope. The list is informational; it does not create a binding. It shows bounded title, session ID, status, update time, and bound/unbound state without exposing the canonical directory.
+- `/oc bind directory:<absolute-path> session:<autocomplete> [host:<configured-id>]` authorizes the requested directory, reads that exact session from the selected host, and creates a new Discord thread for it. It does not create, fork, or copy the OpenCode session and cannot accept an arbitrary host URL. The autocomplete value is a selector only and is never execution authority.
+- Bind eligibility is deliberately narrow: the session must be on the selected host, have the authorized canonical directory, be a root session (no parent), and be unarchived. A session already bound on that same host cannot be bound again. Host and session identity are treated as a pair, so equal IDs on different hosts are isolated.
+- Binding performs a fresh pre-bind read after directory authorization and a second fresh read after Discord thread creation, before claiming the persisted binding. Observational title/model/agent changes are accepted, but deletion, movement, reparenting, archiving, host/directory/ID mismatch, an existing binding, or any failed validation aborts the bind. The post-bind initialization refreshes the managed header, TODO and SubAgent panels, actual history, and pending requests from current OpenCode APIs.
+- Existing actual model/agent values are observed from current OpenCode history; they are not inferred as Bridge preferences. A newly bound existing session starts with Discord model/agent preference set to `(OpenCode default)`.
+- If a pre-commit bind step fails, DisCode removes the new Discord thread and any uncommitted binding claim. Rollback never deletes the pre-existing OpenCode session. If rollback persistence itself fails, the claimed binding is retained rather than risking deletion of an existing session; the failure is reported through bounded logs.
+- `/oc unbind` detaches only the Discord thread and leaves the OpenCode session alive, allowing it to be discovered and safely bound again later. `/oc close` explicitly deletes the bound OpenCode session through that host's API, removes the binding, and archives the Discord thread. Neither operation silently substitutes for the other.
+
+```text
+existing OpenCode session
+  -> /oc bind
+  -> new Discord thread
+  -> managed header
+  -> current parent-session TODO panel
+  -> read-only SubAgent panel
+  -> current pending Ask/Permission recovery
+
+/oc unbind
+  -> remove Discord binding only
+  -> OpenCode session remains discoverable for a later bind
+
+/oc close
+  -> delete the bound OpenCode session
+  -> remove binding
+  -> archive the Discord thread
+```
+
+`/oc sessions` and bind autocomplete use current host APIs. Session listings are always freshly discovered; the short-lived bind autocomplete cache is memory-only, scoped by exact host and canonical directory, and is discarded on restart. It is never persisted or treated as authority. Before committing a bind, DisCode rechecks the current session and uniqueness under a host/session lock.
+
+### Read-only managed views
+
+- `/oc todo` and the managed TODO panel show the current bound parent-session TODO state fetched from OpenCode. They do not provide a Discord-side TODO mutation API.
+- `/oc subagents` lists the bound root's reachable child sessions, and `/oc subagent child:<autocomplete>` shows bounded read-only detail for one authorized child. The child selector is autocomplete-backed and exact host, directory, and root-session checks are repeated before display. These commands do not prompt, mutate, close, or rebind child sessions.
+- Managed header, TODO, SubAgent, result, and redacted tool-activity messages are projections of OpenCode state. Panel message IDs may be persisted as routing metadata; Question, Permission, TODO, SubAgent, tool, prompt, attachment, and credential content is not persisted. Tool views are bounded and never include raw tool input, output, or payloads.
 
 ## Security boundary
 
@@ -50,11 +89,27 @@ Discord is not a remote shell in this design.
 8. Host-registry passwords are referenced with `passwordEnv`; password values are not embedded in `OPENCODE_HOSTS_JSON` or exposed through registry serialization.
 9. A configured secret-file path is operator-controlled configuration. Discord cannot select or change it.
 10. Structured logs use stable identifiers rather than message payloads. Prompt text, Ask answers, tool output, attachment content, directory paths, and Discord user/guild IDs are not part of the normal log context, while credential-like fields and known secret values are redacted.
-11. Pending permissions are never reconstructed from Discord history or persisted as Bridge authority. Startup reconciliation and permission-button handling both consult the selected OpenCode host, and stale/resolved requests are rejected instead of replayed.
+11. Pending Questions and permissions are never reconstructed from Discord history or persisted as Bridge authority. Startup/bind reconciliation and permission-button handling consult current APIs on the selected OpenCode host, and stale/resolved requests are rejected instead of replayed.
 12. Metrics are disabled by default and use a stricter low-cardinality policy than logs: session/thread IDs, paths, user/guild IDs, message content, URLs, usernames, and credentials are not metric labels or payload.
 13. Discord cannot provide provider endpoints, provider configuration, or provider credentials. Model/agent autocomplete is populated only from the selected host's current OpenCode catalog after directory authorization, and every explicit selection is revalidated against that same host and canonical directory at command execution and again immediately before prompt execution. A stale explicit selection never falls back silently to another model or agent.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
+
+### Phase 7 security invariants
+
+Phase 7 security work is an invariant set, not a claim that Phase 7 is complete. Any future existing-session or managed-panel change must preserve all of the following:
+
+1. Discord authorization remains limited to `DISCORD_ALLOWED_USER_IDS` in the configured guild; Discord receives configured host IDs, never arbitrary endpoints or credentials.
+2. Discord cannot enumerate an arbitrary global session catalog: every discovery request is scoped by one configured host plus an authorized canonical directory.
+3. Every requested directory is canonicalized by the selected OpenCode host (realpath semantics) and checked against that host's `OPENCODE_ALLOWED_ROOTS` before discovery, autocomplete, bind, or selection. Only the exact authorized root/project scope is used.
+4. Session IDs returned by autocomplete are selectors, not authority. Existing-session discovery and binding accept root, unarchived sessions only; child/SubAgent sessions remain read-only descendants.
+5. A binding is unique for `(hostId, sessionId)` and its Discord thread; equal session IDs across configured hosts never cross routes or state.
+6. `/oc bind` validates fresh OpenCode state before thread creation and again afterward, claims state atomically, and compensates only newly created Discord/state artifacts. Rollback must never delete the pre-existing OpenCode session.
+7. OpenCode remains authoritative for session state, actual model/agent usage, Questions, Permissions, TODOs, SubAgents, tools, and execution policy. DisCode projections and preferences cannot become alternate authority.
+8. Pending Question and Permission recovery queries the selected host's current APIs after startup or bind, matches exact host/session/directory identity, and rejects stale or already-resolved requests. Discord history is never recovery authority.
+9. Managed TODO and SubAgent surfaces are read-only, child inspection is constrained to the bound root, and tool activity is bounded and redacted. Existing-session transcript/message content and raw tool input/output are not copied into Bridge state.
+10. Persistent permission approval (`always`) remains opt-in. Credentials, raw Question/Permission/TODO/SubAgent/tool content, prompt or attachment content, and raw provider/catalog data remain non-persisted and absent from normal logs/metrics.
+11. Discovery and autocomplete caches are memory-only, bounded, exact-scope data and are never restored as authority after restart. Fresh API validation is required before any binding or execution decision.
 
 ## Host layout
 
@@ -62,7 +117,7 @@ Discord is not a remote shell in this design.
                          +--> OpenCode host: local
 Discord thread A --+     |      session A
                    |     |
-                   +--> OpenCodeDiscordBridge
+                    +--> DisCode
                    |     |
 Discord thread B --+     +--> OpenCode host: lab
                                 session B
