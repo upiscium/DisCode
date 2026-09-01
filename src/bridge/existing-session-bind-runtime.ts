@@ -72,6 +72,7 @@ export class ExistingSessionBindRuntime {
   readonly #subagents: Panels & { forgetBinding(binding: SessionBinding): void };
   readonly #logger: LoggerLike;
   readonly #invalidate: (scope: ExistingSessionScope) => void;
+  readonly #reconcilePending: (binding: SessionBinding) => Promise<void>;
   readonly #lifecycle: Pick<SessionLifecycleSerializer, "run">;
   readonly #now: () => Date;
   readonly #serial = new Map<string, Promise<void>>();
@@ -86,6 +87,7 @@ export class ExistingSessionBindRuntime {
     subagents: Panels & { forgetBinding(binding: SessionBinding): void };
     logger: LoggerLike;
     invalidate: (scope: ExistingSessionScope) => void;
+    reconcilePending: (binding: SessionBinding) => Promise<void>;
     lifecycle: Pick<SessionLifecycleSerializer, "run">;
     now?: () => Date;
   }) {
@@ -98,6 +100,7 @@ export class ExistingSessionBindRuntime {
     this.#subagents = options.subagents;
     this.#logger = options.logger;
     this.#invalidate = options.invalidate;
+    this.#reconcilePending = options.reconcilePending;
     this.#lifecycle = options.lifecycle;
     this.#now = options.now ?? (() => new Date());
   }
@@ -190,6 +193,16 @@ export class ExistingSessionBindRuntime {
         await this.#todos.refreshInitial(candidate);
         await this.#subagents.refreshInitial(candidate);
         await this.#headers.refreshSession(candidate.hostId, candidate.sessionId);
+        try {
+          await this.#reconcilePending(candidate);
+        } catch (error) {
+          this.#logger.warn(
+            "opencode.bind_reconcile_failed",
+            "Failed to reconcile pending OpenCode requests after bind",
+            { ...safeFields(candidate), trigger: "bind" },
+            error,
+          );
+        }
         this.#invalidate({ hostId: candidate.hostId, canonicalDirectory: candidate.directory });
         this.#logger.info(
           "session.bound",

@@ -166,6 +166,9 @@ function fixture(
     error: vi.fn(),
   };
   const invalidate = vi.fn((_scope: unknown) => undefined);
+  const reconcilePending = vi.fn(async (_binding: SessionBinding) => {
+    order.push("pending-reconcile");
+  });
   const lifecycle = new SessionLifecycleSerializer();
   const runtime = new ExistingSessionBindRuntime({
     hosts: {
@@ -189,6 +192,7 @@ function fixture(
     subagents,
     logger,
     invalidate,
+    reconcilePending,
     lifecycle,
     now: () => new Date(CREATED_AT),
   });
@@ -205,6 +209,7 @@ function fixture(
     subagents,
     logger,
     invalidate,
+    reconcilePending,
     lifecycle,
   };
 }
@@ -344,6 +349,7 @@ describe("ExistingSessionBindRuntime post-I/O revalidation", () => {
       "todo",
       "subagent",
       "actual-header",
+      "pending-reconcile",
     ]);
   });
 
@@ -466,7 +472,13 @@ describe("ExistingSessionBindRuntime commit and rollback", () => {
     ]);
     expect(item.state.bindings[0]).not.toHaveProperty("model");
     expect(item.state.bindings[0]).not.toHaveProperty("agent");
-    expect(item.order.slice(-4)).toEqual(["initial-header", "todo", "subagent", "actual-header"]);
+    expect(item.order.slice(-5)).toEqual([
+      "initial-header",
+      "todo",
+      "subagent",
+      "actual-header",
+      "pending-reconcile",
+    ]);
     expect(item.state.claimBindingIfSessionUnbound.mock.invocationCallOrder[0]).toBeLessThan(
       item.headers.createInitialHeader.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
@@ -477,6 +489,13 @@ describe("ExistingSessionBindRuntime commit and rollback", () => {
     expect(item.headers.refreshSession).toHaveBeenCalledWith("adam", "ses_fab083_abc");
     expect(item.todos.refreshInitial).toHaveBeenCalledTimes(1);
     expect(item.subagents.refreshInitial).toHaveBeenCalledTimes(1);
+    expect(item.reconcilePending).toHaveBeenCalledWith(item.state.bindings[0]);
+    expect(item.reconcilePending.mock.invocationCallOrder[0]).toBeLessThan(
+      item.logger.info.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(item.reconcilePending.mock.invocationCallOrder[0]).toBeLessThan(
+      command.editReply.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("uses the existing title for the thread and binding, with a fallback", async () => {
@@ -551,6 +570,48 @@ describe("ExistingSessionBindRuntime commit and rollback", () => {
       expect.objectContaining({ session_id: "ses_fab083_abc" }),
       expect.any(Error),
     );
+  });
+
+  it("keeps a coherent binding when pending reconciliation fails", async () => {
+    const item = fixture();
+    item.reconcilePending.mockRejectedValueOnce(new Error("question content /private/path"));
+    const command = interaction();
+
+    await item.runtime.handleCommand(command as never);
+
+    expect(item.state.bindings).toHaveLength(1);
+    expect(item.threads[0]?.delete).not.toHaveBeenCalled();
+    expect(command.editReply).toHaveBeenCalledWith(expect.stringContaining("Bound <#thread-1>"));
+    expect(item.logger.warn).toHaveBeenCalledWith(
+      "opencode.bind_reconcile_failed",
+      expect.any(String),
+      {
+        host_id: "adam",
+        session_id: "ses_fab083_abc",
+        thread_id: "thread-1",
+        trigger: "bind",
+      },
+      expect.any(Error),
+    );
+    expect(JSON.stringify(item.logger.warn.mock.calls[0]?.[2])).not.toContain("/private/path");
+  });
+
+  it("recovers a pending request whose live event arrived before the binding claim", async () => {
+    const item = fixture();
+    const publish = vi.fn(async () => undefined);
+    const liveEventTrigger = async () => {
+      if (item.state.getBySession("adam", "ses_fab083_abc")) await publish();
+    };
+    await liveEventTrigger();
+    expect(publish).not.toHaveBeenCalled();
+    item.reconcilePending.mockImplementationOnce(async (binding) => {
+      if (item.state.getBySession(binding.hostId, binding.sessionId)) await publish();
+    });
+
+    await item.runtime.handleCommand(interaction() as never);
+
+    expect(item.state.bindings).toHaveLength(1);
+    expect(publish).toHaveBeenCalledTimes(1);
   });
 
   it("removes the claim, forgets indexes, and deletes the thread after critical header failure", async () => {
@@ -718,6 +779,42 @@ describe("ExistingSessionBindRuntime session-key serialization", () => {
 });
 
 describe("ExistingSessionBindRuntime shared lifecycle serialization", () => {
+  it("holds unbind while targeted pending reconciliation is paused", async () => {
+    const gate = deferred();
+    const item = fixture();
+    item.reconcilePending.mockImplementationOnce(async () => {
+      item.order.push("pending-reconcile-paused");
+      await gate.promise;
+    });
+    const command = interaction();
+    const bind = item.runtime.handleCommand(command as never);
+    await vi.waitFor(() => expect(item.reconcilePending).toHaveBeenCalledTimes(1));
+    const binding = item.state.bindings[0] as SessionBinding;
+    const unbindMutation = vi.fn(async () => {
+      await item.state.removeBindingIfMatches("thread-1", "adam", "ses_fab083_abc");
+    });
+    const unbind = runCurrentManagedLifecycleMutation({
+      binding,
+      currentBinding: (threadId) =>
+        item.state.bindings.find((candidate) => candidate.threadId === threadId),
+      lifecycle: item.lifecycle,
+      todos: item.todos,
+      subagents: item.subagents,
+      operation: unbindMutation,
+    });
+
+    await Promise.resolve();
+    expect(unbindMutation).not.toHaveBeenCalled();
+    expect(item.state.bindings).toHaveLength(1);
+
+    gate.resolve();
+    await bind;
+    await unbind;
+    expect(command.editReply).toHaveBeenCalledWith(expect.stringContaining("Bound <#thread-1>"));
+    expect(unbindMutation).toHaveBeenCalledTimes(1);
+    expect(item.state.bindings).toHaveLength(0);
+  });
+
   it("holds unbind behind managed initialization after the claim", async () => {
     const gate = deferred();
     const item = fixture();

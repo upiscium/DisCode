@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PermissionPublicationTracker } from "../src/bridge/permission-publication.js";
 import { reconcilePendingPermissions } from "../src/bridge/permission-reconciliation.js";
 import { noopLogger } from "../src/logging/logger.js";
 import type { OpenCodePermissionRequest } from "../src/opencode/gateway.js";
@@ -75,5 +76,49 @@ describe("reconcilePendingPermissions", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toBe("opencode.permission_reconcile_failed");
     expect(warn.mock.calls[0]?.[2]).toEqual({ host_id: "host-1" });
+  });
+
+  it("supports targeted singleton binding and host reconciliation", async () => {
+    const listPermissions = vi.fn(async () => [permission("per_1", "ses_1")]);
+    const publish = vi.fn(async () => undefined);
+
+    await reconcilePendingPermissions({
+      bindings: [{ hostId: "host-1", sessionId: "ses_1", directory: "/repo" }],
+      hosts: [{ id: "host-1", listPermissions }],
+      publish,
+      logger: noopLogger,
+    });
+
+    expect(listPermissions).toHaveBeenCalledExactlyOnceWith("/repo");
+    expect(publish).toHaveBeenCalledExactlyOnceWith(
+      "host-1",
+      "/repo",
+      permission("per_1", "ses_1"),
+    );
+  });
+
+  it("coalesces targeted reconciliation racing a live event through the existing tracker", async () => {
+    const tracker = new PermissionPublicationTracker();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send = vi.fn(async () => gate);
+    const request = permission("per_1", "ses_1");
+    const publish = (_hostId: string, _directory: string, value: OpenCodePermissionRequest) =>
+      tracker.publish("host-1", value, send).then(() => undefined);
+
+    const reconcile = reconcilePendingPermissions({
+      bindings: [{ hostId: "host-1", sessionId: "ses_1", directory: "/repo" }],
+      hosts: [{ id: "host-1", listPermissions: async () => [request] }],
+      publish,
+      logger: noopLogger,
+    });
+    const live = tracker.publish("host-1", request, send);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    release();
+
+    await Promise.all([reconcile, live]);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

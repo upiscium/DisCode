@@ -42,6 +42,7 @@ import type {
 import { validateOpenCodeSelection } from "../opencode/selection-validation.js";
 import type { SubagentInspector } from "../opencode/subagent-inspector.js";
 import type { StateStore } from "../state/state-store.js";
+import { reconcilePendingAfterBind } from "./bind-pending-reconciliation.js";
 import { ExistingSessionBindRuntime } from "./existing-session-bind-runtime.js";
 import type { ExistingSessionCommandRuntime } from "./existing-session-runtime.js";
 import {
@@ -49,6 +50,8 @@ import {
   PermissionPublicationTracker,
 } from "./permission-publication.js";
 import { reconcilePendingPermissions } from "./permission-reconciliation.js";
+import { QuestionPublicationTracker } from "./question-publication.js";
+import { reconcilePendingQuestions } from "./question-reconciliation.js";
 import { SessionHeaderManager } from "./session-header-manager.js";
 import {
   executeCloseMutation,
@@ -76,6 +79,7 @@ export class Bridge {
   readonly #discord: Client;
   readonly #abortController = new AbortController();
   readonly #permissions = new PermissionPublicationTracker();
+  readonly #questionPublications = new QuestionPublicationTracker();
   readonly #pendingQuestions = new Map<string, OpenCodeQuestionRequest>();
   readonly #lifecycle = new SessionLifecycleSerializer();
   readonly #existingSessions: ExistingSessionCommandRuntime;
@@ -141,6 +145,7 @@ export class Bridge {
       subagents: this.#subagentSync,
       logger: this.#logger,
       invalidate: (scope) => this.#existingSessions.invalidateAutocomplete(scope),
+      reconcilePending: (binding) => this.#reconcilePendingForBinding(binding),
       lifecycle: this.#lifecycle,
     });
   }
@@ -686,6 +691,9 @@ export class Bridge {
           removeBinding: () => this.#state.remove(binding.threadId),
         });
         this.#subagentSync.forgetBinding(binding);
+        this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
+        this.#questionPublications.clearSession(binding.hostId, binding.sessionId);
+        this.#permissions.clearSession(binding.hostId, binding.sessionId);
       },
     });
     if (!closed.current) {
@@ -694,8 +702,6 @@ export class Bridge {
       );
       return;
     }
-    this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
-    this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.closed", "OpenCode session closed", {
       host_id: binding.hostId,
       session_id: binding.sessionId,
@@ -764,6 +770,9 @@ export class Bridge {
           removeBinding: () => this.#state.remove(binding.threadId),
         });
         this.#subagentSync.forgetBinding(binding);
+        this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
+        this.#questionPublications.clearSession(binding.hostId, binding.sessionId);
+        this.#permissions.clearSession(binding.hostId, binding.sessionId);
       },
     });
     if (!unbound.current) {
@@ -772,8 +781,6 @@ export class Bridge {
       );
       return;
     }
-    this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
-    this.#permissions.clearSession(binding.hostId, binding.sessionId);
     this.#logger.info("session.unbound", "Discord thread unbound from OpenCode session", {
       host_id: binding.hostId,
       session_id: binding.sessionId,
@@ -811,6 +818,7 @@ export class Bridge {
         const answers = parseQuestionAnswers(text, pendingQuestion.questions);
         await runtime.gateway.replyQuestion(binding.directory, pendingQuestion.id, answers);
         this.#pendingQuestions.delete(pendingKey);
+        this.#questionPublications.clear(binding.hostId, pendingQuestion.id);
         await message.reply(`↩️ Answer sent for Ask \`${pendingQuestion.id}\`.`);
       } catch (error) {
         await message.reply(`Could not parse the Ask answer: ${errorMessage(error)}`);
@@ -922,7 +930,7 @@ export class Bridge {
         this.#permissions.clear(hostId, event.properties.permissionID);
         break;
       case "question.asked":
-        await this.#publishQuestion(hostId, event.properties);
+        await this.#publishQuestion(hostId, directory, event.properties);
         break;
       case "question.replied":
       case "question.rejected": {
@@ -931,6 +939,7 @@ export class Bridge {
         if (pending?.id === event.properties.requestID) {
           this.#pendingQuestions.delete(key);
         }
+        this.#questionPublications.clear(hostId, event.properties.requestID);
         break;
       }
       case "session.idle":
@@ -977,60 +986,65 @@ export class Bridge {
   }
 
   async #reconcilePendingQuestions(): Promise<void> {
-    for (const runtime of this.#hosts.list()) {
-      const directories = [
-        ...new Set(
-          this.#state
-            .list()
-            .filter((binding) => binding.hostId === runtime.id)
-            .map((binding) => binding.directory),
-        ),
-      ];
-      for (const directory of directories) {
-        try {
-          const questions = await runtime.gateway.listQuestions(directory);
-          for (const question of questions) {
-            if (this.#state.getBySession(runtime.id, question.sessionID)) {
-              await this.#publishQuestion(runtime.id, question);
-            }
-          }
-        } catch (error) {
-          this.#logger.warn(
-            "opencode.question_reconcile_failed",
-            "Failed to reconcile pending OpenCode questions",
-            { host_id: runtime.id },
-            error,
-          );
-        }
-      }
-    }
+    await reconcilePendingQuestions({
+      bindings: this.#state.list(),
+      hosts: this.#hosts.list().map((runtime) => ({
+        id: runtime.id,
+        listQuestions: (directory: string) => runtime.gateway.listQuestions(directory),
+      })),
+      publish: (hostId, directory, request) => this.#publishQuestion(hostId, directory, request),
+      logger: this.#logger,
+    });
   }
 
-  async #publishQuestion(hostId: string, request: OpenCodeQuestionRequest): Promise<void> {
-    const key = sessionKey(hostId, request.sessionID);
-    const current = this.#pendingQuestions.get(key);
-    if (current?.id === request.id) return;
+  async #publishQuestion(
+    hostId: string,
+    directory: string,
+    request: OpenCodeQuestionRequest,
+  ): Promise<void> {
     const binding = this.#state.getBySession(hostId, request.sessionID);
-    if (!binding) return;
-    const thread = await this.#fetchThread(binding.threadId);
-    if (!thread) return;
+    if (!binding || binding.directory !== directory) return;
+    try {
+      const published = await this.#questionPublications.publish(hostId, request, async () => {
+        if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
+          throw new StalePublicationError();
+        }
+        const thread = await this.#fetchThread(binding.threadId);
+        if (!thread) throw new Error("Bound Discord thread could not be fetched");
+        if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
+          throw new StalePublicationError();
+        }
 
-    this.#pendingQuestions.set(key, request);
-    const rendered = renderQuestionAsk(request);
-    const chunks = chunkDiscordText(rendered, 1750);
-    for (const [index, chunk] of chunks.entries()) {
-      const isLast = index === chunks.length - 1;
-      if (!isLast) {
-        await thread.send(chunk);
-        continue;
+        const rendered = renderQuestionAsk(request);
+        const chunks = chunkDiscordText(rendered, 1750);
+        for (const [index, chunk] of chunks.entries()) {
+          if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
+            throw new StalePublicationError();
+          }
+          const isLast = index === chunks.length - 1;
+          if (!isLast) {
+            await thread.send(chunk);
+            continue;
+          }
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(questionCustomId(request.sessionID, request.id))
+              .setLabel("Reject Ask")
+              .setStyle(ButtonStyle.Danger),
+          );
+          await thread.send({ content: chunk, components: [row] });
+        }
+      });
+      if (published) {
+        if (this.#questionPublications.current(hostId, request.id)?.id !== request.id) return;
+        if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
+          this.#questionPublications.clear(hostId, request.id);
+          return;
+        }
+        this.#pendingQuestions.set(sessionKey(hostId, request.sessionID), request);
       }
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(questionCustomId(request.sessionID, request.id))
-          .setLabel("Reject Ask")
-          .setStyle(ButtonStyle.Danger),
-      );
-      await thread.send({ content: chunk, components: [row] });
+    } catch (error) {
+      if (!(error instanceof StalePublicationError)) throw error;
     }
   }
 
@@ -1050,6 +1064,7 @@ export class Bridge {
     }
     await this.#runtimeFor(binding).gateway.rejectQuestion(binding.directory, parsed.requestId);
     this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
+    this.#questionPublications.clear(binding.hostId, parsed.requestId);
     await interaction.update({
       content: `${interaction.message.content}\n\nRejected by <@${interaction.user.id}>.`,
       components: [],
@@ -1068,6 +1083,40 @@ export class Bridge {
     });
   }
 
+  async #reconcilePendingForBinding(binding: SessionBinding): Promise<void> {
+    const runtime = this.#hosts.get(binding.hostId);
+    await reconcilePendingAfterBind({
+      binding,
+      questions: () =>
+        reconcilePendingQuestions({
+          bindings: [binding],
+          hosts: [
+            {
+              id: runtime.id,
+              listQuestions: (directory) => runtime.gateway.listQuestions(directory),
+            },
+          ],
+          publish: (hostId, directory, request) =>
+            this.#publishQuestion(hostId, directory, request),
+          logger: this.#logger,
+        }),
+      permissions: () =>
+        reconcilePendingPermissions({
+          bindings: [binding],
+          hosts: [
+            {
+              id: runtime.id,
+              listPermissions: (directory) => runtime.gateway.listPermissions(directory),
+            },
+          ],
+          publish: (hostId, directory, request) =>
+            this.#publishPermission(hostId, directory, request),
+          logger: this.#logger,
+        }),
+      logger: this.#logger,
+    });
+  }
+
   async #publishPermission(
     hostId: string,
     directory: string,
@@ -1076,42 +1125,54 @@ export class Bridge {
     const binding = this.#state.getBySession(hostId, permission.sessionID);
     if (!binding || binding.directory !== directory) return;
 
-    await this.#permissions.publish(hostId, permission, async () => {
-      const thread = await this.#fetchThread(binding.threadId);
-      if (!thread) throw new Error("Bound Discord thread could not be fetched");
+    try {
+      await this.#permissions.publish(hostId, permission, async () => {
+        if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
+          throw new StalePublicationError();
+        }
+        const thread = await this.#fetchThread(binding.threadId);
+        if (!thread) throw new Error("Bound Discord thread could not be fetched");
+        if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
+          throw new StalePublicationError();
+        }
 
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(permissionCustomId("once", permission.sessionID, permission.id))
-          .setLabel("Allow once")
-          .setStyle(ButtonStyle.Success),
-      );
-      if (this.#config.allowPermissionAlways) {
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(permissionCustomId("once", permission.sessionID, permission.id))
+            .setLabel("Allow once")
+            .setStyle(ButtonStyle.Success),
+        );
+        if (this.#config.allowPermissionAlways) {
+          row.addComponents(
+            new ButtonBuilder()
+              .setCustomId(permissionCustomId("always", permission.sessionID, permission.id))
+              .setLabel("Allow always")
+              .setStyle(ButtonStyle.Secondary),
+          );
+        }
         row.addComponents(
           new ButtonBuilder()
-            .setCustomId(permissionCustomId("always", permission.sessionID, permission.id))
-            .setLabel("Allow always")
-            .setStyle(ButtonStyle.Secondary),
+            .setCustomId(permissionCustomId("reject", permission.sessionID, permission.id))
+            .setLabel("Reject")
+            .setStyle(ButtonStyle.Danger),
         );
-      }
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(permissionCustomId("reject", permission.sessionID, permission.id))
-          .setLabel("Reject")
-          .setStyle(ButtonStyle.Danger),
-      );
 
-      const patternText = permission.pattern.join(", ");
-      await thread.send({
-        content: [
-          "⚠️ **OpenCode permission requested**",
-          `Title: ${truncate(permission.title, 500)}`,
-          `Type: \`${escapeInlineCode(permission.type)}\``,
-          ...(patternText ? [`Pattern: \`${escapeInlineCode(truncate(patternText, 900))}\``] : []),
-        ].join("\n"),
-        components: [row],
+        const patternText = permission.pattern.join(", ");
+        await thread.send({
+          content: [
+            "⚠️ **OpenCode permission requested**",
+            `Title: ${truncate(permission.title, 500)}`,
+            `Type: \`${escapeInlineCode(permission.type)}\``,
+            ...(patternText
+              ? [`Pattern: \`${escapeInlineCode(truncate(patternText, 900))}\``]
+              : []),
+          ].join("\n"),
+          components: [row],
+        });
       });
-    });
+    } catch (error) {
+      if (!(error instanceof StalePublicationError)) throw error;
+    }
   }
 
   async #handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
@@ -1214,6 +1275,21 @@ export class Bridge {
 
 function sessionKey(hostId: string, sessionId: string): string {
   return `${hostId}:${sessionId}`;
+}
+
+class StalePublicationError extends Error {}
+
+function samePublicationBinding(
+  current: SessionBinding | undefined,
+  expected: SessionBinding,
+): boolean {
+  return (
+    current?.threadId === expected.threadId &&
+    current.hostId === expected.hostId &&
+    current.sessionId === expected.sessionId &&
+    current.directory === expected.directory &&
+    current.createdAt === expected.createdAt
+  );
 }
 
 function permissionPatterns(value: unknown): string[] {
