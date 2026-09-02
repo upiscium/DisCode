@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PermissionPublicationTracker } from "../src/bridge/permission-publication.js";
 import type { OpenCodePermissionRequest } from "../src/opencode/gateway.js";
 
@@ -22,5 +22,17 @@ describe("PermissionPublicationTracker session cleanup", () => {
     expect(tracker.current("host-1", "per_a")).toBeUndefined();
     expect(tracker.current("host-2", "per_b")).toEqual(b);
     expect(tracker.current("host-1", "per_c")).toEqual(c);
+  });
+
+  it("allows a still-pending permission to publish after session cleanup", async () => {
+    const tracker = new PermissionPublicationTracker();
+    const pending = request("per_a", "ses_same");
+    const send = vi.fn(async () => undefined);
+    await tracker.publish("host-1", pending, send);
+
+    tracker.clearSession("host-1", "ses_same");
+    await tracker.publish("host-1", pending, send);
+
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });

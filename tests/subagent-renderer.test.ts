@@ -6,8 +6,8 @@ import {
 } from "../src/discord/subagent.js";
 
 const base = {
-  id: "child-1",
-  parentSessionId: "root-1",
+  id: "ses_fab083_abc",
+  parentSessionId: "ses_parent_123",
   depth: 2,
   hostId: "host-a",
   directory: "/repo",
@@ -16,8 +16,8 @@ const base = {
 describe("subagent Discord renderers", () => {
   it("renders list metadata and explicit unknown optionals", () => {
     const output = renderSubagentList([base]);
-    expect(output).toContain("child-1");
-    expect(output).toContain("Parent: root-1");
+    expect(output).toContain("Session: `ses_fab083_abc`");
+    expect(output).toContain("Parent: `ses_parent_123`");
     expect(output).toContain("Status: (unknown)");
     expect(output).toContain("Agent: (unknown)");
     expect(output).toContain("Depth: 2");
@@ -94,16 +94,28 @@ describe("subagent Discord renderers", () => {
     expect(output).not.toContain("secret");
   });
 
+  it("preserves exact Session and Parent identifiers in list and detail output", () => {
+    const list = renderSubagentList([base]);
+    const detail = renderSubagentDetail(base);
+
+    for (const output of [list, detail]) {
+      expect(output).toContain("`ses_fab083_abc`");
+      expect(output).toContain("`ses_parent_123`");
+    }
+  });
+
   it("neutralizes mentions, markdown, and backticks", () => {
     const output = renderSubagentDetail({
       ...base,
-      title: "@everyone **x** `code`",
+      title: "@everyone **x** `code` [click](https://bad.example)",
       messages: [{ role: "user", text: "@here *unsafe* `x`" }],
     });
     expect(output).not.toContain("@everyone");
     expect(output).not.toContain("@here");
     expect(output).toContain("＠everyone");
-    expect(output).not.toContain("`");
+    expect(output).not.toContain("`code`");
+    expect(output).not.toContain("`x`");
+    expect(output).not.toContain("[click](https://bad.example)");
   });
 
   it("renders TODOs and unavailable TODO state", () => {
