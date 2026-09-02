@@ -55,11 +55,11 @@ import { reconcilePendingQuestions } from "./question-reconciliation.js";
 import { SessionHeaderManager } from "./session-header-manager.js";
 import {
   executeCloseMutation,
-  executeUnbindMutation,
   lifecycleBlockReason,
   renderLifecycleBlock,
   runCurrentManagedLifecycleMutation,
   runManagedPanelMutation,
+  runPureUnbindLifecycleMutation,
   SessionLifecycleSerializer,
 } from "./session-lifecycle.js";
 import { SubagentPanelManager } from "./subagent-panel-manager.js";
@@ -748,31 +748,21 @@ export class Bridge {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const runtime = this.#runtimeFor(binding);
-    const status = await runtime.gateway.status(binding.directory, binding.sessionId);
-    const blocker = lifecycleBlockReason(
-      status?.type,
-      this.#pendingQuestions.has(sessionKey(binding.hostId, binding.sessionId)),
-    );
-    if (blocker) {
-      await interaction.editReply(renderLifecycleBlock(blocker));
-      return;
-    }
-
-    const unbound = await runCurrentManagedLifecycleMutation({
+    const unbound = await runPureUnbindLifecycleMutation({
       binding,
       currentBinding: (threadId) => this.#state.getByThread(threadId),
       lifecycle: this.#lifecycle,
       todos: this.#todos,
       subagents: this.#subagentSync,
-      operation: async () => {
-        await executeUnbindMutation({
-          removeBinding: () => this.#state.remove(binding.threadId),
-        });
-        this.#subagentSync.forgetBinding(binding);
-        this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
-        this.#questionPublications.clearSession(binding.hostId, binding.sessionId);
-        this.#permissions.clearSession(binding.hostId, binding.sessionId);
+      operations: {
+        removeBinding: () => this.#state.remove(binding.threadId),
+        forgetBinding: () => this.#subagentSync.forgetBinding(binding),
+        clearPendingQuestions: () =>
+          this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId)),
+        clearQuestionPublications: () =>
+          this.#questionPublications.clearSession(binding.hostId, binding.sessionId),
+        clearPermissionPublications: () =>
+          this.#permissions.clearSession(binding.hostId, binding.sessionId),
       },
     });
     if (!unbound.current) {

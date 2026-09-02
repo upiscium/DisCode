@@ -15,6 +15,13 @@ export type UnbindMutationOperations = {
   removeBinding: () => Promise<void>;
 };
 
+export type PureUnbindOperations = UnbindMutationOperations & {
+  forgetBinding: () => void;
+  clearPendingQuestions: () => void;
+  clearQuestionPublications: () => void;
+  clearPermissionPublications: () => void;
+};
+
 type BindingMutationSerializer = {
   runBindingMutation<T>(threadId: string, operation: () => Promise<T>): Promise<T>;
 };
@@ -95,6 +102,32 @@ export function runCurrentManagedLifecycleMutation<T>(options: {
       options.operation,
     );
     return { current: true, result };
+  });
+}
+
+/** Removes only Discord-owned binding state; OpenCode execution state is deliberately absent. */
+export function runPureUnbindLifecycleMutation(options: {
+  binding: SessionBinding;
+  currentBinding: (threadId: string) => SessionBinding | undefined;
+  lifecycle: Pick<SessionLifecycleSerializer, "run">;
+  todos: BindingMutationSerializer;
+  subagents: BindingMutationSerializer;
+  operations: PureUnbindOperations;
+}): Promise<{ current: false } | { current: true; result: undefined }> {
+  return runCurrentManagedLifecycleMutation({
+    binding: options.binding,
+    currentBinding: options.currentBinding,
+    lifecycle: options.lifecycle,
+    todos: options.todos,
+    subagents: options.subagents,
+    operation: async () => {
+      await executeUnbindMutation({ removeBinding: options.operations.removeBinding });
+      options.operations.forgetBinding();
+      options.operations.clearPendingQuestions();
+      options.operations.clearQuestionPublications();
+      options.operations.clearPermissionPublications();
+      return undefined;
+    },
   });
 }
 
