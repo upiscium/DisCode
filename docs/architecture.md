@@ -163,6 +163,35 @@ StateStore mutation queue
 
 Lifecycle operations enter the per-thread serializer before the inner TODO/SubAgent queues; managed-panel mutations use the fixed TODO-then-SubAgent nesting. StateStore remains the persistence/claim boundary, and each panel rechecks the current binding before publishing. The lifecycle serializer is separate from the panel queues so a panel refresh cannot wait on a lifecycle operation that is waiting on that same panel queue; the fixed nesting prevents TODO/SubAgent lock inversion. Thus serialization protects lifecycle identity and Discord projections without making a Discord panel or autocomplete cache authoritative.
 
+### Unbind and close lifecycle policy
+
+`/oc unbind` is a pure Discord-owned binding detach:
+
+```text
+/oc unbind
+  -> require the exact current Discord binding
+  -> SessionLifecycleSerializer
+  -> TODO managed queue, then SubAgent managed queue
+  -> remove binding
+  -> forget managed descendant index
+  -> clear transient Question/Permission publication coordination
+  -> done
+```
+
+This path performs no OpenCode status read, abort, Question reply or rejection, Permission reply, or session deletion. It therefore does not depend on whether OpenCode is busy, retrying, waiting on a Question or Permission, or temporarily unreachable.
+
+By contrast, close is destructive:
+
+```text
+/oc close
+  -> current OpenCode lifecycle check
+  -> destructive OpenCode session delete
+  -> binding removal
+  -> archive Discord thread
+```
+
+`/oc close` retains the execution and pending-request blockers appropriate to session deletion. Clearing unbind's transient Question/Permission trackers is necessary because a request that remains pending in OpenCode must be eligible for publication again when the same session is later bound to a new Discord thread. Old-thread controls become stale and non-authoritative: every authority-bearing Question or Permission operation revalidates the exact current binding identity before acting, while bind reconciliation reconstructs current pending requests from OpenCode APIs in the new thread.
+
 ## Model / agent selection authority
 
 Discord selection is intentionally constrained to an already-authorized `(hostId, canonical directory)` boundary.

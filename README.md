@@ -48,6 +48,8 @@ Discord attachments can be sent to an idle bound session as OpenCode FileParts. 
 - If a pre-commit bind step fails, DisCode removes the new Discord thread and any uncommitted binding claim. Rollback never deletes the pre-existing OpenCode session. If rollback persistence itself fails, the claimed binding is retained rather than risking deletion of an existing session; the failure is reported through bounded logs.
 - `/oc unbind` detaches only the Discord thread and leaves the OpenCode session alive, allowing it to be discovered and safely bound again later. `/oc close` explicitly deletes the bound OpenCode session through that host's API, removes the binding, and archives the Discord thread. Neither operation silently substitutes for the other.
 
+`/oc unbind` does not query or depend on current OpenCode execution status. It may detach a binding while the session is busy, retrying, waiting on a Question or Permission, or temporarily unreachable. It does not abort the session, answer or reject a request, or delete the OpenCode session. Old Question and Permission controls become stale and non-authoritative after unbind; a later bind reconstructs current pending requests from OpenCode APIs in the new thread. `/oc close` remains the destructive lifecycle operation and retains its current lifecycle safety checks.
+
 ```text
 existing OpenCode session
   -> /oc bind
@@ -59,6 +61,7 @@ existing OpenCode session
 
 /oc unbind
   -> remove Discord binding only
+  -> old pending-request controls become stale
   -> OpenCode session remains discoverable for a later bind
 
 /oc close

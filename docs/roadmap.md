@@ -93,7 +93,7 @@ Status: **Complete (2026-08-31)**
 
 ### Phase 7A / Issue #56 — Existing root-session discovery and bind
 
-Status: **In progress**
+Status: **Complete (2026-09-02)**
 
 - `/oc sessions` performs fresh discovery for the exact configured host and canonical allowed directory; `/oc bind` creates a new Discord thread for an existing eligible root session.
 - Authority is `configured host -> canonical allowed directory -> current OpenCode root session -> fresh execution-time validation -> Discord thread -> post-I/O OpenCode validation -> guarded unique binding claim`.
@@ -106,7 +106,14 @@ Status: **In progress**
 - Managed header, TODO, and SubAgent state are reconstructed after claim. Current pending Ask/Permission state is then recovered from exact OpenCode APIs, with live-SSE/reconciliation publication deduplication.
 - `/oc unbind` leaves the OpenCode session alive and clears transient publication coordination so a later discovery and rebind can safely surface still-pending requests.
 
-Adam/Eve real-environment acceptance is still pending, so Phase 7A is not complete.
+#### Real-environment acceptance
+
+Adam/Eve smoke verified fresh `/oc sessions` discovery; exact canonical Session ID rendering; existing root-session `/oc bind` without new OpenCode session creation; managed header, TODO, and SubAgent reconstruction; bound-state transition and duplicate-bind rejection; `unbind -> rediscover -> rebind`; restart persistence without old-thread managed-panel resurrection; same-directory host isolation; pending Ask and Permission recovery after unbind/rebind; old-thread Ask controls becoming non-authoritative; Ask response from the newly bound thread; and pure `/oc unbind` while OpenCode was active or pending.
+
+The initial real-environment smoke exposed a lifecycle defect: `/oc unbind` shared `/oc close`'s busy/pending lifecycle gate, preventing reattachment testing while an OpenCode request remained pending. The final policy separates the operations:
+
+- `/oc unbind` is a Discord-owned binding detach only, independent of OpenCode busy, retry, Question, Permission, or unreachable state.
+- `/oc close` is destructive OpenCode session deletion and retains execution/pending lifecycle blockers.
 
 ## Future considerations
 
