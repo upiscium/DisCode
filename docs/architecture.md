@@ -1,5 +1,41 @@
 # Architecture
 
+## Configuration authority and compatibility
+
+DisCode has two mutually exclusive configuration modes. When `OCB_CONFIG_FILE`
+is set, it deterministically selects one external TOML file as the complete
+non-secret configuration authority. TOML is not merged with environment
+configuration, and a missing or invalid selected file does not trigger a
+legacy-environment fallback. When `OCB_CONFIG_FILE` is unset, legacy environment
+configuration remains supported.
+`STATE_FILE` remains a process-lifecycle storage-path input in both modes so the
+NixOS module can keep persistent state under its managed state directory; it is
+not Discord topology, host topology, logging, or metrics authority.
+
+The TOML schema uses `[routing] default_host` and exact `[host.<name>]` tables.
+Each `<name>` is a stable, case-sensitive host ID: it is the same ID exposed to
+Discord and stored with bindings, not a display label or an arbitrary URL.
+`DISCORD_TOKEN` remains a direct runtime secret authority and is not referenced
+in TOML. Host `password_env` values reference runtime environment variables;
+their names must match `OPENCODE_HOST_<NAME>_PASSWORD` so host configuration
+cannot select unrelated process secrets. `config.toml` itself contains no secret
+values. Optional Discord booleans default to `false`; `[logging]` defaults to
+`level = "info"` and `format = "json"`;
+`[metrics]` defaults to `enabled = false`, `address = "127.0.0.1"`, and
+`port = 9464`. Host `base_url` is required and has no implicit loopback default.
+
+Secret resolution is a separate runtime concern. `DISCORD_TOKEN` and every
+`password_env` reference resolve with the existing precedence:
+
+```text
+existing process/systemd environment
+  > OCB_SECRETS_FILE
+  > repository-local .env
+```
+
+`OCB_SECRETS_FILE` itself must be selected by the process/systemd environment.
+Secret values are not persisted in state or emitted in logs.
+
 ## Responsibility split
 
 ### OpenCode Servers
@@ -32,7 +68,9 @@ Remains the execution-policy authority on every host. A Discord authorization gr
 
 ## Host registry
 
-`OPENCODE_HOSTS_JSON` defines trusted host identities. Discord sees only the host ID, never a free-form URL or credential.
+In TOML mode, exact `[host.<name>]` table keys define trusted host identities. In
+legacy environment mode, `OPENCODE_HOSTS_JSON` provides the same registry
+contract. Discord sees only the host ID, never a free-form URL or credential.
 
 Each runtime host owns:
 
@@ -293,7 +331,18 @@ The NixOS module gives systemd ownership of Bridge process lifecycle:
 - a Bridge restart therefore preserves bindings and selection preferences without coupling OpenCode session lifetime to the Bridge process;
 - stopping the Bridge does not stop, abort, migrate, or delete OpenCode server sessions.
 
-Runtime non-secret configuration can still be supplied through `Environment=` or a systemd `EnvironmentFile`. Secrets remain an application-level dotenv file selected with `OCB_SECRETS_FILE`. The NixOS module can supply that contract either directly with legacy `secretsFile` or through systemd `LoadCredential=` with `secretsCredentialFile`. The Bridge parser itself is unchanged: it expands `~`/`~/...` when a normal path is supplied and loads the selected file before repository-local `.env`.
+Runtime non-secret configuration can be supplied by the external TOML `configFile`
+or, in legacy mode, through `Environment=` or a systemd `EnvironmentFile`.
+NixOS `configFile` and `environmentFile` are mutually exclusive, must point
+outside the Nix store, and the module passes the selected path without reading
+or embedding its contents. Secrets remain an application-level dotenv file
+selected with `OCB_SECRETS_FILE`. The NixOS module can supply that contract
+either directly with legacy `secretsFile` or through systemd `LoadCredential=`
+with `secretsCredentialFile`. The Bridge parser expands `~`/`~/...` for normal
+paths and preserves the fixed secret precedence above. The external TOML file
+is expected to be operator-owned and not writable by the service account. The
+module exposes it read-only to the service and rejects a path inside the writable
+service state directory.
 
 Configuration precedence is intentionally fixed as:
 

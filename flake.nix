@@ -74,6 +74,23 @@
           };
           service = testSystem.config.systemd.services.opencode-discord-bridge;
           credentialSource = "/run/secrets/opencode-discord-bridge.env";
+          configPath = "/etc/opencode-discord-bridge/config.toml";
+          configSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  configFile = configPath;
+                  secretsCredentialFile = credentialSource;
+                };
+              }
+            ];
+          };
+          configService = configSystem.config.systemd.services.opencode-discord-bridge;
           credentialSystem = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = [
@@ -146,9 +163,71 @@
               }
             ];
           };
+          configConflictSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  configFile = configPath;
+                  environmentFile = "/run/opencode-discord-bridge.env";
+                };
+              }
+            ];
+          };
+          storeConfigSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  configFile = "${package}/bridge.toml";
+                };
+              }
+            ];
+          };
+          configEnvironmentConflictSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  configFile = configPath;
+                  environment.DISCORD_CLIENT_ID = "legacy-client";
+                };
+              }
+            ];
+          };
+          stateConfigSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  configFile = "/var/lib/opencode-discord-bridge/config.toml";
+                };
+              }
+            ];
+          };
           conflictEval = builtins.tryEval conflictSystem.config.system.build.toplevel;
           storeCredentialEval = builtins.tryEval storeCredentialSystem.config.system.build.toplevel;
           relativeCredentialEval = builtins.tryEval relativeCredentialSystem.config.system.build.toplevel;
+          configConflictEval = builtins.tryEval configConflictSystem.config.system.build.toplevel;
+          storeConfigEval = builtins.tryEval storeConfigSystem.config.system.build.toplevel;
+          configEnvironmentConflictEval = builtins.tryEval configEnvironmentConflictSystem.config.system.build.toplevel;
+          stateConfigEval = builtins.tryEval stateConfigSystem.config.system.build.toplevel;
           moduleEvalCheck =
             assert service.serviceConfig.Restart == "on-failure";
             assert service.serviceConfig.StateDirectory == "opencode-discord-bridge-test";
@@ -159,6 +238,15 @@
             assert service.environment.OCB_METRICS_ENABLED == "true";
             assert service.environment.OCB_METRICS_HOST == "127.0.0.1";
             assert service.environment.OCB_METRICS_PORT == "19464";
+            assert !(service.environment ? OCB_CONFIG_FILE);
+            assert configService.environment.OCB_CONFIG_FILE == configPath;
+            assert configService.serviceConfig.ReadOnlyPaths == [ configPath ];
+            assert !(configService.environment ? OCB_LOG_LEVEL);
+            assert !(configService.environment ? OCB_LOG_FORMAT);
+            assert !(configService.environment ? OCB_METRICS_ENABLED);
+            assert configService.serviceConfig.LoadCredential == [ "ocb-secrets.env:${credentialSource}" ];
+            assert !nixpkgs.lib.hasInfix configPath configService.serviceConfig.ExecStart;
+            assert !nixpkgs.lib.hasInfix "discord-token-do-not-embed" configService.serviceConfig.ExecStart;
             assert !(builtins.elem 19464 testSystem.config.networking.firewall.allowedTCPPorts);
             assert credentialService.serviceConfig.LoadCredential == [ "ocb-secrets.env:${credentialSource}" ];
             assert credentialService.environment.OCB_SECRETS_FILE == "%d/ocb-secrets.env";
@@ -168,6 +256,10 @@
             assert !conflictEval.success;
             assert !storeCredentialEval.success;
             assert !relativeCredentialEval.success;
+            assert !configConflictEval.success;
+            assert !storeConfigEval.success;
+            assert !configEnvironmentConflictEval.success;
+            assert !stateConfigEval.success;
             assert defaultMetricsService.environment.OCB_METRICS_ENABLED == "false";
             assert defaultMetricsService.environment.OCB_METRICS_HOST == "127.0.0.1";
             assert defaultMetricsService.environment.OCB_METRICS_PORT == "9464";

@@ -3,18 +3,24 @@
 
 let
   cfg = config.services.opencode-discord-bridge;
-  statePath = "/var/lib/${cfg.stateDirectory}/${cfg.stateFile}";
+  stateDirectoryPath = "/var/lib/${cfg.stateDirectory}";
+  statePath = "${stateDirectoryPath}/${cfg.stateFile}";
   credentialName = "ocb-secrets.env";
-  serviceEnvironment = cfg.environment // {
+  legacyServiceEnvironment = {
     OCB_LOG_LEVEL = cfg.logLevel;
     OCB_LOG_FORMAT = cfg.logFormat;
     OCB_METRICS_ENABLED = if cfg.metrics.enable then "true" else "false";
     OCB_METRICS_HOST = cfg.metrics.address;
     OCB_METRICS_PORT = builtins.toString cfg.metrics.port;
-  } // lib.optionalAttrs (cfg.secretsFile != null) {
+  };
+  serviceEnvironment = cfg.environment
+  // lib.optionalAttrs (cfg.configFile == null) legacyServiceEnvironment
+  // lib.optionalAttrs (cfg.secretsFile != null) {
     OCB_SECRETS_FILE = cfg.secretsFile;
   } // lib.optionalAttrs (cfg.secretsCredentialFile != null) {
     OCB_SECRETS_FILE = "%d/${credentialName}";
+  } // lib.optionalAttrs (cfg.configFile != null) {
+    OCB_CONFIG_FILE = cfg.configFile;
   };
 in
 {
@@ -54,6 +60,17 @@ in
         Runtime systemd EnvironmentFile containing Bridge configuration. Keep secrets in
         secretsFile or secretsCredentialFile when possible. STATE_FILE is controlled by
         this module and does not need to be present in the environment file.
+      '';
+    };
+
+    configFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/etc/opencode-discord-bridge/config.toml";
+      description = ''
+        Optional external runtime-readable TOML configuration file. The path is passed
+        to the service as OCB_CONFIG_FILE; Nix never reads or embeds the file content.
+        This option is mutually exclusive with environmentFile and environment.
       '';
     };
 
@@ -155,6 +172,26 @@ in
       }
       {
         assertion =
+          cfg.configFile == null
+          || !lib.hasPrefix "${builtins.storeDir}/" cfg.configFile;
+        message = "services.opencode-discord-bridge.configFile must point outside the Nix store";
+      }
+      {
+        assertion = !(cfg.configFile != null && cfg.environmentFile != null);
+        message = "services.opencode-discord-bridge.configFile and environmentFile are mutually exclusive";
+      }
+      {
+        assertion = !(cfg.configFile != null && cfg.environment != { });
+        message = "services.opencode-discord-bridge.configFile and environment are mutually exclusive";
+      }
+      {
+        assertion =
+          cfg.configFile == null
+          || !(cfg.configFile == stateDirectoryPath || lib.hasPrefix "${stateDirectoryPath}/" cfg.configFile);
+        message = "services.opencode-discord-bridge.configFile must not be inside the service StateDirectory";
+      }
+      {
+        assertion =
           cfg.secretsFile == null
           || !lib.hasPrefix builtins.storeDir cfg.secretsFile;
         message = "services.opencode-discord-bridge.secretsFile must point outside the Nix store";
@@ -209,6 +246,8 @@ in
         RestartSec = "5s";
         KillSignal = "SIGTERM";
         TimeoutStopSec = "30s";
+      } // lib.optionalAttrs (cfg.configFile != null) {
+        ReadOnlyPaths = [ cfg.configFile ];
       } // lib.optionalAttrs (cfg.environmentFile != null) {
         EnvironmentFile = cfg.environmentFile;
       } // lib.optionalAttrs (cfg.secretsCredentialFile != null) {
