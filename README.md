@@ -171,7 +171,86 @@ Copy `.env.example` to `.env` for ordinary configuration. Secrets may stay in `.
 
 ### 2. Configure the OpenCode boundary
 
-The legacy single-host form remains supported and is the fallback when `OPENCODE_HOSTS_JSON` is unset:
+DisCode supports two configuration modes. Set `OCB_CONFIG_FILE` to select TOML
+mode; otherwise legacy environment mode remains supported. The selected mode is
+deterministic: the TOML file is the complete non-secret configuration authority,
+TOML and environment configuration are not merged, and a missing or invalid
+selected TOML file does not fall back to legacy environment settings.
+`STATE_FILE` remains a process-lifecycle storage-path setting rather than
+Discord/host product configuration; the NixOS module continues to set it under
+the service state directory in both modes.
+
+#### TOML mode
+
+`config.toml` contains non-secret configuration only. `DISCORD_TOKEN` remains a
+direct runtime secret authority and is not referenced in TOML. Each host's
+`password_env` names the runtime variable containing that host's OpenCode
+password and must match `OPENCODE_HOST_<NAME>_PASSWORD`, preventing a host from
+referencing unrelated process secrets. Host tables use `host.<name>`; `<name>`
+is the exact, case-sensitive stable host ID used by Discord commands and
+persisted bindings. The secret name is derived deterministically by uppercasing
+the host ID and replacing hyphens with underscores: `adam` maps to
+`OPENCODE_HOST_ADAM_PASSWORD`, while `host-1` maps to
+`OPENCODE_HOST_HOST_1_PASSWORD`.
+
+```toml
+[discord]
+client_id = "<discord-application-id>"
+guild_id = "<discord-guild-id>"
+parent_channel_id = "<discord-parent-channel-id>"
+allowed_user_ids = ["<discord-user-id>"]
+allow_permission_always = false
+stream_assistant_text = false
+show_tool_summaries = false
+
+[routing]
+default_host = "local"
+
+[host.local]
+base_url = "http://127.0.0.1:4096"
+username = "opencode"
+password_env = "OPENCODE_HOST_LOCAL_PASSWORD"
+allowed_roots = ["/home/upiscium/Documents/Programs"]
+
+[host.lab]
+base_url = "https://opencode.example.invalid"
+username = "opencode"
+password_env = "OPENCODE_HOST_LAB_PASSWORD"
+allowed_roots = ["/srv/projects"]
+
+[logging]
+level = "info"
+format = "json"
+
+[metrics]
+enabled = false
+address = "127.0.0.1"
+port = 9464
+```
+
+Optional Discord booleans default to `false`. TOML logging defaults to
+`info`/`json`; metrics default to disabled with `127.0.0.1:9464` when enabled.
+Each host `base_url` is required and has no implicit loopback default. Use an
+external secret file or the process environment for runtime secrets; do not
+replace placeholders above with real credentials in documentation.
+
+To migrate an existing deployment, first put non-secret settings in
+`/etc/opencode-discord-bridge/config.toml`, keep `DISCORD_TOKEN` and the
+`OPENCODE_HOST_*_PASSWORD` values in the existing runtime secret mechanism, and
+then set `OCB_CONFIG_FILE` in the service environment:
+
+```dotenv
+OCB_CONFIG_FILE=/etc/opencode-discord-bridge/config.toml
+```
+
+Remove legacy configuration variables only after the TOML deployment has been
+validated. Legacy environment mode remains supported for operators who do not
+set `OCB_CONFIG_FILE`.
+
+#### Legacy environment mode
+
+The legacy single-host form remains supported when `OCB_CONFIG_FILE` is unset
+and `OPENCODE_HOSTS_JSON` is unset:
 
 ```dotenv
 OPENCODE_ALLOWED_ROOTS=/home/upiscium/Documents/Programs
@@ -351,7 +430,7 @@ The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, 
 
 ## NixOS service operation
 
-The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, to let systemd copy a root/operator-owned dotenv secret into the service credential directory while explicitly enabling loopback metrics:
+The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, TOML mode can pair an external non-secret configuration file with a root/operator-owned dotenv secret copied into the service credential directory:
 
 ```nix
 {
@@ -369,14 +448,7 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
             group = "users";
             createUser = false;
             secretsCredentialFile = "/run/secrets/opencode-discord-bridge.env";
-            environmentFile = "/run/opencode-discord-bridge.env";
-            logLevel = "info";
-            logFormat = "json";
-            metrics = {
-              enable = true;
-              address = "127.0.0.1";
-              port = 9464;
-            };
+            configFile = "/etc/opencode-discord-bridge/config.toml";
             stateDirectory = "opencode-discord-bridge";
           };
         }
@@ -390,9 +462,27 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
 
 Legacy `secretsFile` remains supported and backward compatible. It passes the selected path directly as `OCB_SECRETS_FILE`, so that file must remain readable by the configured service user; `~/...` is expanded by the Bridge at runtime. `secretsFile` and `secretsCredentialFile` are mutually exclusive and conflicting configuration fails during Nix evaluation.
 
-`environmentFile` and `environment` remain available for non-secret or legacy configuration. `STATE_FILE` is controlled by the module and placed under `/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed `environmentFile`, `secretsFile`, and `secretsCredentialFile` paths. The credential source path is visible in systemd unit metadata, so operators should not encode secret values into filenames.
+In this example, `[logging]` and `[metrics]` belong in `config.toml`, as shown in
+the TOML example above. In `configFile` mode, TOML is their authority and the
+module does not emit `OCB_LOG_*` or `OCB_METRICS_*`. In legacy environment mode,
+the module's `logLevel`, `logFormat`, and `metrics` options are projected into
+those environment variables.
 
-The NixOS module defaults to `logLevel = "info"`, `logFormat = "json"`, and `metrics.enable = false`. If metrics are enabled, their defaults remain `address = "127.0.0.1"` and `port = 9464`; the module does not add the port to `networking.firewall.allowedTCPPorts`.
+`configFile` selects the external TOML authority and is mutually exclusive with
+`environmentFile` and the module's free-form `environment` option; use one
+non-secret authority only. The path must be absolute and external to the Nix
+store, and Nix never reads or embeds the TOML content. `environmentFile`
+and `environment` remain available for legacy/non-secret configuration when TOML
+mode is not selected. `STATE_FILE` is controlled by the module and placed under
+`/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed
+`configFile`, `environmentFile`, `secretsFile`, and `secretsCredentialFile`
+paths. The credential source path is visible in systemd unit metadata, so
+operators should not encode secret values into filenames. The external TOML
+file should be operator-owned and must not be writable by the service account.
+The module mounts the selected file read-only in the service namespace and
+rejects paths inside its writable `StateDirectory`.
+
+In legacy environment mode, the NixOS module defaults to `logLevel = "info"`, `logFormat = "json"`, and `metrics.enable = false`. If metrics are enabled, their defaults remain `address = "127.0.0.1"` and `port = 9464`; the module does not add the port to `networking.firewall.allowedTCPPorts`.
 
 By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session. `LoadCredential=` is optional deployment hardening; agenix or sops-nix may provide the source path without becoming Bridge dependencies.
 
