@@ -18,8 +18,9 @@ Discord and stored with bindings, not a display label or an arbitrary URL.
 `DISCORD_TOKEN` remains a direct runtime secret authority and is not referenced
 in TOML. Host `password_env` values reference runtime environment variables;
 their names must match `OPENCODE_HOST_<NAME>_PASSWORD` so host configuration
-cannot select unrelated process secrets. `config.toml` itself contains no secret
-values. Optional Discord booleans default to `false`; `[logging]` defaults to
+cannot select unrelated process secrets. `<NAME>` is derived by uppercasing the
+exact host ID and replacing hyphens with underscores. `config.toml` itself
+contains no secret values. Optional Discord booleans default to `false`; `[logging]` defaults to
 `level = "info"` and `format = "json"`;
 `[metrics]` defaults to `enabled = false`, `address = "127.0.0.1"`, and
 `port = 9464`. Host `base_url` is required and has no implicit loopback default.
@@ -333,8 +334,8 @@ The NixOS module gives systemd ownership of Bridge process lifecycle:
 
 Runtime non-secret configuration can be supplied by the external TOML `configFile`
 or, in legacy mode, through `Environment=` or a systemd `EnvironmentFile`.
-NixOS `configFile` and `environmentFile` are mutually exclusive, must point
-outside the Nix store, and the module passes the selected path without reading
+NixOS `configFile` and `environmentFile` are mutually exclusive. `configFile`
+must be absolute and outside the Nix store, and the module passes it without reading
 or embedding its contents. Secrets remain an application-level dotenv file
 selected with `OCB_SECRETS_FILE`. The NixOS module can supply that contract
 either directly with legacy `secretsFile` or through systemd `LoadCredential=`
@@ -343,6 +344,10 @@ paths and preserves the fixed secret precedence above. The external TOML file
 is expected to be operator-owned and not writable by the service account. The
 module exposes it read-only to the service and rejects a path inside the writable
 service state directory.
+
+In `configFile` mode, TOML `[logging]` and `[metrics]` tables are authoritative;
+the module does not emit `OCB_LOG_*` or `OCB_METRICS_*`. The module's `logLevel`,
+`logFormat`, and `metrics` options are projected only in legacy environment mode.
 
 Configuration precedence is intentionally fixed as:
 

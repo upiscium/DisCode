@@ -221,6 +221,20 @@
               }
             ];
           };
+          relativeConfigSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.opencode-discord-bridge = {
+                  enable = true;
+                  package = package;
+                  configFile = "relative/config.toml";
+                };
+              }
+            ];
+          };
           conflictEval = builtins.tryEval conflictSystem.config.system.build.toplevel;
           storeCredentialEval = builtins.tryEval storeCredentialSystem.config.system.build.toplevel;
           relativeCredentialEval = builtins.tryEval relativeCredentialSystem.config.system.build.toplevel;
@@ -228,6 +242,7 @@
           storeConfigEval = builtins.tryEval storeConfigSystem.config.system.build.toplevel;
           configEnvironmentConflictEval = builtins.tryEval configEnvironmentConflictSystem.config.system.build.toplevel;
           stateConfigEval = builtins.tryEval stateConfigSystem.config.system.build.toplevel;
+          relativeConfigEval = builtins.tryEval relativeConfigSystem.config.system.build.toplevel;
           moduleEvalCheck =
             assert service.serviceConfig.Restart == "on-failure";
             assert service.serviceConfig.StateDirectory == "opencode-discord-bridge-test";
@@ -260,6 +275,7 @@
             assert !storeConfigEval.success;
             assert !configEnvironmentConflictEval.success;
             assert !stateConfigEval.success;
+            assert !relativeConfigEval.success;
             assert defaultMetricsService.environment.OCB_METRICS_ENABLED == "false";
             assert defaultMetricsService.environment.OCB_METRICS_HOST == "127.0.0.1";
             assert defaultMetricsService.environment.OCB_METRICS_PORT == "9464";

@@ -47,8 +47,6 @@ type TomlConfig = {
   metrics: { enabled: boolean; address: string; port: number };
 };
 
-const TOML_HOST_PASSWORD_ENV_PATTERN = /^OPENCODE_HOST_[A-Z0-9_]+_PASSWORD$/;
-
 export function readConfigFile(path: string): string {
   try {
     return readFileSync(path, "utf8");
@@ -124,7 +122,7 @@ export function parseTomlConfig(contents: string): TomlConfig {
     hosts[id] = {
       baseUrl: stringField(host.base_url, `host.${id}.base_url`),
       username: stringField(host.username, `host.${id}.username`),
-      passwordEnv: tomlHostPasswordEnv(host.password_env, `host.${id}.password_env`),
+      passwordEnv: stringField(host.password_env, `host.${id}.password_env`),
       allowedRoots: normalizeAllowedRoots(host.allowed_roots, `host.${id}.allowed_roots`),
     };
   }
@@ -145,6 +143,9 @@ export function parseTomlConfig(contents: string): TomlConfig {
       allowedRoots: host.allowedRoots,
     })),
   );
+  for (const [id, host] of Object.entries(hosts)) {
+    host.passwordEnv = tomlHostPasswordEnv(host.passwordEnv, id, `host.${id}.password_env`);
+  }
   return {
     discord: {
       clientId: stringField(discord.client_id, "discord.client_id"),
@@ -181,10 +182,11 @@ export function parseTomlConfig(contents: string): TomlConfig {
   };
 }
 
-function tomlHostPasswordEnv(value: unknown, label: string): string {
+function tomlHostPasswordEnv(value: unknown, hostId: string, label: string): string {
   const name = stringField(value, label);
-  if (!TOML_HOST_PASSWORD_ENV_PATTERN.test(name)) {
-    throw new Error(`${label} must match OPENCODE_HOST_<NAME>_PASSWORD`);
+  const expected = `OPENCODE_HOST_${hostId.toUpperCase().replaceAll("-", "_")}_PASSWORD`;
+  if (name !== expected) {
+    throw new Error(`${label} must be ${expected}`);
   }
   return name;
 }

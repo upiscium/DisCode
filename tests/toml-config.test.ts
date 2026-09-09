@@ -86,6 +86,39 @@ describe("TOML configuration", () => {
     expect(config.opencodePassword).toBe("local-secret");
   });
 
+  it("derives the exact password environment name from the host ID", () => {
+    const adamToml = toml
+      .replace('default_host = "remote"', 'default_host = "adam"')
+      .replace("[host.local]", "[host.adam]")
+      .replace("OPENCODE_HOST_LOCAL_PASSWORD", "OPENCODE_HOST_ADAM_PASSWORD")
+      .replace(/\n\[host\.remote\][\s\S]*$/, "");
+    expect(
+      loadConfig({
+        OCB_CONFIG_FILE: fileWith(adamToml),
+        DISCORD_TOKEN: "runtime-token",
+        OPENCODE_HOST_ADAM_PASSWORD: "adam-secret",
+      }).hostRegistry.defaultHost().password,
+    ).toBe("adam-secret");
+
+    expect(() =>
+      parseTomlConfig(
+        adamToml.replace("OPENCODE_HOST_ADAM_PASSWORD", "OPENCODE_HOST_EVE_PASSWORD"),
+      ),
+    ).toThrow(/OPENCODE_HOST_ADAM_PASSWORD/);
+
+    const hyphenatedToml = adamToml
+      .replace('default_host = "adam"', 'default_host = "host-1"')
+      .replace("[host.adam]", "[host.host-1]")
+      .replace("OPENCODE_HOST_ADAM_PASSWORD", "OPENCODE_HOST_HOST_1_PASSWORD");
+    expect(
+      loadConfig({
+        OCB_CONFIG_FILE: fileWith(hyphenatedToml),
+        DISCORD_TOKEN: "runtime-token",
+        OPENCODE_HOST_HOST_1_PASSWORD: "host-1-secret",
+      }).hostRegistry.defaultHost().password,
+    ).toBe("host-1-secret");
+  });
+
   it("requires a non-empty config-file setting and reports directory reads deterministically", () => {
     expect(() => loadConfig({ OCB_CONFIG_FILE: "" })).toThrow(/OCB_CONFIG_FILE/);
     expect(() => loadConfig({ OCB_CONFIG_FILE: "/path/that/does/not/exist" })).toThrow(
@@ -174,7 +207,7 @@ port = 9999
     expect(directPasswordError.message).not.toContain("direct-secret");
     expect(() =>
       parseTomlConfig(toml.replace("OPENCODE_HOST_LOCAL_PASSWORD", "DISCORD_TOKEN")),
-    ).toThrow(/OPENCODE_HOST_<NAME>_PASSWORD/);
+    ).toThrow(/OPENCODE_HOST_LOCAL_PASSWORD/);
     expect(() =>
       parseTomlConfig(
         toml.replace('base_url = "http://127.0.0.1:4096"', 'base_url = "ftp://host"'),

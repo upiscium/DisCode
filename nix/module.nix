@@ -70,7 +70,9 @@ in
       description = ''
         Optional external runtime-readable TOML configuration file. The path is passed
         to the service as OCB_CONFIG_FILE; Nix never reads or embeds the file content.
-        This option is mutually exclusive with environmentFile and environment.
+        This must be an absolute path and is mutually exclusive with environmentFile
+        and environment. In this mode, logging and metrics settings come from TOML;
+        the logLevel, logFormat, and metrics options are legacy environment-mode inputs.
       '';
     };
 
@@ -116,18 +118,18 @@ in
     logLevel = lib.mkOption {
       type = lib.types.enum [ "debug" "info" "warn" "error" ];
       default = "info";
-      description = "Minimum structured log level emitted by the Bridge.";
+      description = "Minimum structured log level in legacy environment mode. TOML mode uses logging.level.";
     };
 
     logFormat = lib.mkOption {
       type = lib.types.enum [ "json" "pretty" ];
       default = "json";
-      description = "Bridge log format. JSON is the default for systemd/journald operation.";
+      description = "Bridge log format in legacy environment mode. TOML mode uses logging.format.";
     };
 
     metrics = lib.mkOption {
       default = { };
-      description = "Optional Prometheus metrics scrape endpoint.";
+      description = "Optional Prometheus metrics scrape endpoint in legacy environment mode. TOML mode uses the metrics table.";
       type = lib.types.submodule {
         options = {
           enable = lib.mkOption {
@@ -175,6 +177,12 @@ in
           cfg.configFile == null
           || !lib.hasPrefix "${builtins.storeDir}/" cfg.configFile;
         message = "services.opencode-discord-bridge.configFile must point outside the Nix store";
+      }
+      {
+        assertion =
+          cfg.configFile == null
+          || lib.hasPrefix "/" cfg.configFile;
+        message = "services.opencode-discord-bridge.configFile must be an absolute path";
       }
       {
         assertion = !(cfg.configFile != null && cfg.environmentFile != null);

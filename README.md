@@ -188,7 +188,10 @@ direct runtime secret authority and is not referenced in TOML. Each host's
 password and must match `OPENCODE_HOST_<NAME>_PASSWORD`, preventing a host from
 referencing unrelated process secrets. Host tables use `host.<name>`; `<name>`
 is the exact, case-sensitive stable host ID used by Discord commands and
-persisted bindings.
+persisted bindings. The secret name is derived deterministically by uppercasing
+the host ID and replacing hyphens with underscores: `adam` maps to
+`OPENCODE_HOST_ADAM_PASSWORD`, while `host-1` maps to
+`OPENCODE_HOST_HOST_1_PASSWORD`.
 
 ```toml
 [discord]
@@ -427,7 +430,7 @@ The bot creates a thread bound to `(hostId, sessionId)`. From then on, prompts, 
 
 ## NixOS service operation
 
-The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, to let systemd copy a root/operator-owned dotenv secret into the service credential directory while explicitly enabling loopback metrics:
+The flake exports `nixosModules.default` and `nixosModules.opencode-discord-bridge`. A deployment flake can import the module and run the Bridge as a durable systemd service. For example, TOML mode can pair an external non-secret configuration file with a root/operator-owned dotenv secret copied into the service credential directory:
 
 ```nix
 {
@@ -446,13 +449,6 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
             createUser = false;
             secretsCredentialFile = "/run/secrets/opencode-discord-bridge.env";
             configFile = "/etc/opencode-discord-bridge/config.toml";
-            logLevel = "info";
-            logFormat = "json";
-            metrics = {
-              enable = true;
-              address = "127.0.0.1";
-              port = 9464;
-            };
             stateDirectory = "opencode-discord-bridge";
           };
         }
@@ -466,10 +462,16 @@ The flake exports `nixosModules.default` and `nixosModules.opencode-discord-brid
 
 Legacy `secretsFile` remains supported and backward compatible. It passes the selected path directly as `OCB_SECRETS_FILE`, so that file must remain readable by the configured service user; `~/...` is expanded by the Bridge at runtime. `secretsFile` and `secretsCredentialFile` are mutually exclusive and conflicting configuration fails during Nix evaluation.
 
+In this example, `[logging]` and `[metrics]` belong in `config.toml`, as shown in
+the TOML example above. In `configFile` mode, TOML is their authority and the
+module does not emit `OCB_LOG_*` or `OCB_METRICS_*`. In legacy environment mode,
+the module's `logLevel`, `logFormat`, and `metrics` options are projected into
+those environment variables.
+
 `configFile` selects the external TOML authority and is mutually exclusive with
 `environmentFile` and the module's free-form `environment` option; use one
-non-secret authority only. The path must be external
-to the Nix store, and Nix never reads or embeds the TOML content. `environmentFile`
+non-secret authority only. The path must be absolute and external to the Nix
+store, and Nix never reads or embeds the TOML content. `environmentFile`
 and `environment` remain available for legacy/non-secret configuration when TOML
 mode is not selected. `STATE_FILE` is controlled by the module and placed under
 `/var/lib/<stateDirectory>/<stateFile>`. The module rejects store-backed
@@ -480,7 +482,7 @@ file should be operator-owned and must not be writable by the service account.
 The module mounts the selected file read-only in the service namespace and
 rejects paths inside its writable `StateDirectory`.
 
-The NixOS module defaults to `logLevel = "info"`, `logFormat = "json"`, and `metrics.enable = false`. If metrics are enabled, their defaults remain `address = "127.0.0.1"` and `port = 9464`; the module does not add the port to `networking.firewall.allowedTCPPorts`.
+In legacy environment mode, the NixOS module defaults to `logLevel = "info"`, `logFormat = "json"`, and `metrics.enable = false`. If metrics are enabled, their defaults remain `address = "127.0.0.1"` and `port = 9464`; the module does not add the port to `networking.firewall.allowedTCPPorts`.
 
 By default the module creates an `opencode-discord-bridge` system user/group, starts after `network-online.target`, uses systemd `StateDirectory` for persistent writable state, restarts on abnormal exit, and stops the process with `SIGTERM`. Restarting or stopping this service does not start, stop, migrate, or delete any OpenCode server/session. `LoadCredential=` is optional deployment hardening; agenix or sops-nix may provide the source path without becoming Bridge dependencies.
 
