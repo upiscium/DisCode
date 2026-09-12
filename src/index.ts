@@ -27,7 +27,7 @@ import { OpenCodeTodoGateway } from "./opencode/todo-gateway.js";
 import { loadSecretEnvironment } from "./secrets.js";
 import { StateStore } from "./state/state-store.js";
 
-const BRIDGE_VERSION = "0.1.0";
+const BRIDGE_VERSION = "0.2.0";
 
 loadSecretEnvironment();
 if (existsSync(".env")) {
