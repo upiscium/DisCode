@@ -58,6 +58,19 @@ describe("SessionAuthorityResolver", () => {
     expect(host.getSession).toHaveBeenCalledWith("/home/upiscium/repo", "ses-1");
   });
 
+  it("fails closed if the host registry returns a different runtime identity", async () => {
+    const host = runtime();
+    const resolver = new SessionAuthorityResolver({
+      get: () => ({ ...host.value, id: "host-2" }),
+    });
+
+    await expect(
+      resolver.resolve({ hostId: "host-1", directory: "/repo", sessionId: "ses-1" }),
+    ).rejects.toThrow(/host identity changed/);
+    expect(host.authorizeDirectory).not.toHaveBeenCalled();
+    expect(host.getSession).not.toHaveBeenCalled();
+  });
+
   it.each(identityMismatchCases)("fails closed on %s", async (_label, overrides) => {
     const host = runtime(overrides);
     const resolver = new SessionAuthorityResolver({ get: () => host.value });
