@@ -6,15 +6,17 @@ function runtime(sessionOverrides: Partial<ExistingSession> = {}) {
   const authorizeDirectory = vi.fn(async (directory: string) =>
     directory === "~/repo" ? "/home/upiscium/repo" : directory,
   );
-  const getSession = vi.fn(async (directory: string, sessionId: string): Promise<ExistingSession> => ({
-    hostId: "host-1",
-    id: sessionId,
-    directory,
-    title: "repo",
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.6" },
-    ...sessionOverrides,
-  }));
+  const getSession = vi.fn(
+    async (directory: string, sessionId: string): Promise<ExistingSession> => ({
+      hostId: "host-1",
+      id: sessionId,
+      directory,
+      title: "repo",
+      agent: "build",
+      model: { providerID: "openai", modelID: "gpt-5.6" },
+      ...sessionOverrides,
+    }),
+  );
   return {
     value: {
       id: "host-1",
