@@ -28,6 +28,12 @@ function runtime(sessionOverrides: Partial<ExistingSession> = {}) {
   };
 }
 
+const identityMismatchCases = [
+  ["host mismatch", { hostId: "host-2" }],
+  ["session mismatch", { id: "other-session" }],
+  ["directory mismatch", { directory: "/other" }],
+] satisfies Array<[string, Partial<ExistingSession>]>;
+
 describe("SessionAuthorityResolver", () => {
   it("resolves selected-host directory before fresh exact session validation", async () => {
     const host = runtime();
@@ -52,21 +58,14 @@ describe("SessionAuthorityResolver", () => {
     expect(host.getSession).toHaveBeenCalledWith("/home/upiscium/repo", "ses-1");
   });
 
-  it.each([
-    ["host mismatch", { hostId: "host-2" }],
-    ["session mismatch", { id: "other-session" }],
-    ["directory mismatch", { directory: "/other" }],
-  ] satisfies Array<[string, Partial<ExistingSession>]>) (
-    "fails closed on %s",
-    async (_label, overrides) => {
-      const host = runtime(overrides);
-      const resolver = new SessionAuthorityResolver({ get: () => host.value });
+  it.each(identityMismatchCases)("fails closed on %s", async (_label, overrides) => {
+    const host = runtime(overrides);
+    const resolver = new SessionAuthorityResolver({ get: () => host.value });
 
-      await expect(
-        resolver.resolve({ hostId: "host-1", directory: "/repo", sessionId: "ses-1" }),
-      ).rejects.toThrow(/identity changed/);
-    },
-  );
+    await expect(
+      resolver.resolve({ hostId: "host-1", directory: "/repo", sessionId: "ses-1" }),
+    ).rejects.toThrow(/identity changed/);
+  });
 
   it("rejects child sessions as mutable root authority", async () => {
     const host = runtime({ parentId: "root-session" });
