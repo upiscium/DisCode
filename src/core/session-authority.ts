@@ -1,8 +1,5 @@
 import type { ExistingSession } from "../opencode/existing-session-gateway.js";
-import type {
-  OpenCodeHostRuntime,
-  OpenCodeHostRuntimeRegistry,
-} from "../opencode/host-runtime-registry.js";
+import type { OpenCodeHostRuntime } from "../opencode/host-runtime-registry.js";
 
 export type SessionAuthorityInput = Readonly<{
   hostId: string;
@@ -24,7 +21,9 @@ type SessionAuthorityRuntime = Pick<
   "id" | "authorizeDirectory" | "existingSessions"
 >;
 
-type SessionAuthorityHostRegistry = Pick<OpenCodeHostRuntimeRegistry, "get">;
+type SessionAuthorityHostRegistry = Readonly<{
+  get(id: string): SessionAuthorityRuntime;
+}>;
 
 export class SessionAuthorityResolver {
   readonly #hosts: SessionAuthorityHostRegistry;
@@ -38,7 +37,7 @@ export class SessionAuthorityResolver {
       throw new Error("Session authority requires host, directory, and session identity");
     }
 
-    const runtime = this.#hosts.get(input.hostId) as SessionAuthorityRuntime;
+    const runtime = this.#hosts.get(input.hostId);
     const canonicalDirectory = await runtime.authorizeDirectory(input.directory);
     const session = await runtime.existingSessions.getSession(canonicalDirectory, input.sessionId);
     assertExactRootSession(runtime.id, canonicalDirectory, input.sessionId, session);
