@@ -10,7 +10,7 @@ export const openCodeCommand = new SlashCommandBuilder()
       .addStringOption((option) =>
         option
           .setName("directory")
-          .setDescription("Absolute repository directory")
+          .setDescription("Absolute path, ~, or ~/... repository directory")
           .setRequired(true),
       )
       .addStringOption((option) =>
@@ -41,7 +41,7 @@ export const openCodeCommand = new SlashCommandBuilder()
       .addStringOption((option) =>
         option
           .setName("directory")
-          .setDescription("Absolute repository directory")
+          .setDescription("Absolute path, ~, or ~/... repository directory")
           .setRequired(true),
       )
       .addStringOption((option) =>
@@ -57,7 +57,7 @@ export const openCodeCommand = new SlashCommandBuilder()
       .addStringOption((option) =>
         option
           .setName("directory")
-          .setDescription("Absolute repository directory")
+          .setDescription("Absolute path, ~, or ~/... repository directory")
           .setRequired(true),
       )
       .addStringOption((option) =>

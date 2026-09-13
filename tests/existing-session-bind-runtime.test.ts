@@ -280,6 +280,24 @@ describe("ExistingSessionBindRuntime authority", () => {
     );
   });
 
+  it("passes a tilde directory to the host authorizer and persists only its canonical result", async () => {
+    const adam = host("adam", "/home/adam/repo");
+    const item = fixture({ hosts: [adam] });
+
+    await item.runtime.handleCommand(
+      interaction({ directory: "~/repo", sessionId: "ses_fab083_abc" }) as never,
+    );
+
+    expect(adam.authorizeDirectory).toHaveBeenCalledWith("~/repo");
+    expect(adam.existingSessions.getSession).toHaveBeenNthCalledWith(
+      1,
+      "/home/adam/repo",
+      "ses_fab083_abc",
+    );
+    expect(item.state.bindings[0]).toMatchObject({ directory: "/home/adam/repo" });
+    expect(item.state.bindings[0]?.directory).not.toBe("~/repo");
+  });
+
   it.each([
     ["selector mismatch", session({ id: "different" })],
     ["host mismatch", session({ hostId: "eve" })],

@@ -6,6 +6,7 @@ const host = {
   baseUrl: "http://127.0.0.1:4096",
   username: "opencode",
   password: "top-secret",
+  homeDirectory: "/srv/local-user",
   allowedRoots: ["/repo"],
 } as const;
 
@@ -36,5 +37,20 @@ describe("HostRegistry", () => {
     expect(serialized).toContain('"defaultHost":"local"');
     expect(serialized).not.toContain("top-secret");
     expect(serialized).not.toContain("password");
+    expect(serialized).toContain('"homeDirectory":"/srv/local-user"');
+  });
+
+  it("validates optional home directories", () => {
+    expect(
+      new HostRegistry("local", [{ ...host, homeDirectory: "/srv/local-user/../actual/" }]).get(
+        "local",
+      ).homeDirectory,
+    ).toBe("/srv/actual");
+    expect(() => new HostRegistry("local", [{ ...host, homeDirectory: "relative" }])).toThrow(
+      /absolute POSIX path/,
+    );
+    expect(() => new HostRegistry("local", [{ ...host, homeDirectory: "/srv\0user" }])).toThrow(
+      /absolute POSIX path/,
+    );
   });
 });

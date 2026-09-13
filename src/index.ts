@@ -7,8 +7,6 @@ import { SubagentRuntime } from "./bridge/subagent-runtime.js";
 import { ToolSummaryPublisher } from "./bridge/tool-summary-publisher.js";
 import { loadConfig } from "./config.js";
 import { selectionAutocomplete } from "./discord/selection-autocomplete.js";
-import { DirectoryPolicy } from "./domain/directory-policy.js";
-import type { OpenCodeHostConfig } from "./domain/host-registry.js";
 import { Logger } from "./logging/logger.js";
 import { PrometheusMetrics } from "./metrics/prometheus.js";
 import { MetricsServer } from "./metrics/server.js";
@@ -16,12 +14,12 @@ import { OpenCodeChildSessionGateway } from "./opencode/child-session-gateway.js
 import { OpenCodeSseMonitor, setOpenCodeHealthLogger } from "./opencode/diagnostics.js";
 import { ExistingSessionDiscovery } from "./opencode/existing-session-discovery.js";
 import { OpenCodeExistingSessionGateway } from "./opencode/existing-session-gateway.js";
+import { createHostDirectoryAuthorizer } from "./opencode/host-directory-authorizer.js";
 import {
   type OpenCodeHostRuntime,
   OpenCodeHostRuntimeRegistry,
 } from "./opencode/host-runtime-registry.js";
 import { ObservedOpenCodeGateway } from "./opencode/observed-gateway.js";
-import { createOpenCodeDirectoryResolver } from "./opencode/remote-directory-resolver.js";
 import { SubagentInspector } from "./opencode/subagent-inspector.js";
 import { OpenCodeTodoGateway } from "./opencode/todo-gateway.js";
 import { loadSecretEnvironment } from "./secrets.js";
@@ -108,7 +106,7 @@ const hostRuntimes = config.hostRegistry.list().map((host): OpenCodeHostRuntime 
       ...(host.password ? { password: host.password } : {}),
     }),
     sseMonitor: new OpenCodeSseMonitor(),
-    authorizeDirectory: lazyDirectoryAuthorizer(host),
+    authorizeDirectory: createHostDirectoryAuthorizer(host),
   };
 });
 
@@ -190,20 +188,4 @@ async function warmPersistedSelectionCatalogs(): Promise<void> {
   }
 
   await Promise.allSettled(requests);
-}
-
-function lazyDirectoryAuthorizer(host: OpenCodeHostConfig): (directory: string) => Promise<string> {
-  let policyPromise: Promise<DirectoryPolicy> | undefined;
-  return async (directory: string): Promise<string> => {
-    if (!policyPromise) {
-      policyPromise = DirectoryPolicy.createWithResolver(
-        host.allowedRoots,
-        createOpenCodeDirectoryResolver(host),
-      ).catch((error) => {
-        policyPromise = undefined;
-        throw error;
-      });
-    }
-    return (await policyPromise).authorize(directory);
-  };
 }

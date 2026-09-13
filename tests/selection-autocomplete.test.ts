@@ -74,6 +74,36 @@ describe("selectionAutocomplete", () => {
     expect(adam.gateway.listModels).toHaveBeenCalledWith("/srv/repo");
   });
 
+  it.each(["model", "agent"] as const)(
+    "authorizes the supplied start directory through the selected host for %s autocomplete",
+    async (kind) => {
+      const eve = runtime({
+        canonical: "/home/eve/project",
+        models: [{ providerID: "local", modelID: "model" }],
+        agents: [{ name: "build", mode: "primary" }],
+      });
+
+      await expect(
+        selectionAutocomplete(registry({ eve }), {
+          kind,
+          hostId: "eve",
+          directory: "~/project",
+        }),
+      ).resolves.toEqual([
+        kind === "model"
+          ? { name: "local/model", value: "local/model" }
+          : { name: "build", value: "build" },
+      ]);
+
+      expect(eve.authorizeDirectory).toHaveBeenCalledWith("~/project");
+      if (kind === "model") {
+        expect(eve.gateway.listModels).toHaveBeenCalledWith("/home/eve/project");
+      } else {
+        expect(eve.gateway.listAgents).toHaveBeenCalledWith("/home/eve/project");
+      }
+    },
+  );
+
   it("keeps host catalogs isolated", async () => {
     const adam = runtime({
       models: [{ providerID: "adam-provider", modelID: "adam-model" }],

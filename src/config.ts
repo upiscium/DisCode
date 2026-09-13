@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "smol-toml";
+import { validateHomeDirectory } from "./domain/host-directory-input.js";
 import { HostRegistry, type OpenCodeHostConfig } from "./domain/host-registry.js";
 import { type LogFormat, type LogLevel, parseLogFormat, parseLogLevel } from "./logging/logger.js";
 
@@ -40,7 +41,13 @@ type TomlConfig = {
   hosts: Readonly<
     Record<
       string,
-      { baseUrl: string; username: string; passwordEnv: string; allowedRoots: readonly string[] }
+      {
+        baseUrl: string;
+        username: string;
+        passwordEnv: string;
+        allowedRoots: readonly string[];
+        homeDirectory?: string;
+      }
     >
   >;
   logging: { level: LogLevel; format: LogFormat };
@@ -114,16 +121,31 @@ export function parseTomlConfig(contents: string): TomlConfig {
   const hostTable = tomlObject(root.host, "host");
   const hosts: Record<
     string,
-    { baseUrl: string; username: string; passwordEnv: string; allowedRoots: readonly string[] }
+    {
+      baseUrl: string;
+      username: string;
+      passwordEnv: string;
+      allowedRoots: readonly string[];
+      homeDirectory?: string;
+    }
   > = {};
   for (const [id, value] of Object.entries(hostTable)) {
     const host = tomlObject(value, `host.${id}`);
-    assertOnlyKeys(host, ["base_url", "username", "password_env", "allowed_roots"], `host.${id}`);
+    assertOnlyKeys(
+      host,
+      ["base_url", "username", "password_env", "allowed_roots", "home_directory"],
+      `host.${id}`,
+    );
+    const homeDirectory =
+      host.home_directory === undefined
+        ? undefined
+        : validateHomeDirectory(host.home_directory, `host.${id}.home_directory`);
     hosts[id] = {
       baseUrl: stringField(host.base_url, `host.${id}.base_url`),
       username: stringField(host.username, `host.${id}.username`),
       passwordEnv: stringField(host.password_env, `host.${id}.password_env`),
       allowedRoots: normalizeAllowedRoots(host.allowed_roots, `host.${id}.allowed_roots`),
+      ...(homeDirectory === undefined ? {} : { homeDirectory }),
     };
   }
   if (Object.keys(hosts).length === 0) throw new Error("host must contain at least one host");
@@ -140,6 +162,7 @@ export function parseTomlConfig(contents: string): TomlConfig {
       id,
       baseUrl: normalizeBaseUrl(host.baseUrl, `host.${id}.base_url`),
       username: host.username,
+      ...(host.homeDirectory ? { homeDirectory: host.homeDirectory } : {}),
       allowedRoots: host.allowedRoots,
     })),
   );
@@ -207,6 +230,7 @@ export function resolveTomlSecrets(config: TomlConfig, env: NodeJS.ProcessEnv): 
       baseUrl: normalizeBaseUrl(host.baseUrl, `host.${id}.base_url`),
       username: host.username,
       password,
+      ...(host.homeDirectory === undefined ? {} : { homeDirectory: host.homeDirectory }),
       allowedRoots: host.allowedRoots,
     };
   });
@@ -311,12 +335,17 @@ function legacyHostRegistry(env: NodeJS.ProcessEnv): HostRegistry {
     "OPENCODE_BASE_URL",
   );
   const password = env.OPENCODE_SERVER_PASSWORD?.trim();
+  const homeDirectory =
+    env.OPENCODE_HOME_DIRECTORY === undefined
+      ? undefined
+      : validateHomeDirectory(env.OPENCODE_HOME_DIRECTORY, "OPENCODE_HOME_DIRECTORY");
   const host: OpenCodeHostConfig = {
     id: "default",
     baseUrl,
     username: env.OPENCODE_SERVER_USERNAME?.trim() || "opencode",
     ...(password ? { password } : {}),
     allowedRoots: Object.freeze(allowedRoots.map((root) => resolve(root))),
+    ...(homeDirectory === undefined ? {} : { homeDirectory }),
   };
   return new HostRegistry("default", [host]);
 }
@@ -341,7 +370,11 @@ function configuredHostRegistry(raw: string, env: NodeJS.ProcessEnv): HostRegist
   const hosts = parsed.hosts.map((item, index): OpenCodeHostConfig => {
     const label = `OPENCODE_HOSTS_JSON.hosts[${index}]`;
     if (!isRecord(item)) throw new Error(`${label} must be an object`);
-    assertOnlyKeys(item, ["id", "baseUrl", "username", "passwordEnv", "allowedRoots"], label);
+    assertOnlyKeys(
+      item,
+      ["id", "baseUrl", "username", "passwordEnv", "allowedRoots", "homeDirectory"],
+      label,
+    );
 
     const id = stringField(item.id, `${label}.id`);
     const baseUrl = normalizeBaseUrl(
@@ -350,6 +383,10 @@ function configuredHostRegistry(raw: string, env: NodeJS.ProcessEnv): HostRegist
     );
     const username = stringField(item.username, `${label}.username`);
     const allowedRoots = normalizeAllowedRoots(item.allowedRoots, `${label}.allowedRoots`);
+    const homeDirectory =
+      item.homeDirectory === undefined
+        ? undefined
+        : validateHomeDirectory(item.homeDirectory, `${label}.homeDirectory`);
 
     let password: string | undefined;
     if (item.passwordEnv !== undefined) {
@@ -362,6 +399,7 @@ function configuredHostRegistry(raw: string, env: NodeJS.ProcessEnv): HostRegist
       baseUrl,
       username,
       ...(password ? { password } : {}),
+      ...(homeDirectory ? { homeDirectory } : {}),
       allowedRoots,
     };
   });
