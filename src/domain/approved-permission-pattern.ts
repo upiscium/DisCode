@@ -82,7 +82,9 @@ export function samePermissionPatternAuthority(
   left: Readonly<{ permissionType: string; pattern: readonly string[] }>,
   right: Readonly<{ permissionType: string; pattern: readonly string[] }>,
 ): boolean {
-  return left.permissionType === right.permissionType && sameExactPattern(left.pattern, right.pattern);
+  return (
+    left.permissionType === right.permissionType && sameExactPattern(left.pattern, right.pattern)
+  );
 }
 
 export function validExactPattern(value: readonly unknown[]): readonly string[] | undefined {
