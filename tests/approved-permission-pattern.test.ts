@@ -22,9 +22,14 @@ describe("approved permission pattern identity", () => {
     const changed = createApprovedPermissionPattern({ ...scope, pattern: ["ssh -p *"] });
 
     expect(left).toBeDefined();
-    expect(sameApprovedPermissionPattern(left!, same!)).toBe(true);
-    expect(sameApprovedPermissionPattern(left!, whitespace!)).toBe(false);
-    expect(sameApprovedPermissionPattern(left!, changed!)).toBe(false);
+    expect(same).toBeDefined();
+    expect(whitespace).toBeDefined();
+    expect(changed).toBeDefined();
+    if (!left || !same || !whitespace || !changed) throw new Error("invalid test fixture");
+
+    expect(sameApprovedPermissionPattern(left, same)).toBe(true);
+    expect(sameApprovedPermissionPattern(left, whitespace)).toBe(false);
+    expect(sameApprovedPermissionPattern(left, changed)).toBe(false);
   });
 
   it("does not interpret regex, glob, shell, or environment syntax", () => {
