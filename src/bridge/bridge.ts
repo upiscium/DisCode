@@ -1134,21 +1134,29 @@ export class Bridge {
       pattern: permission.pattern,
     });
     if (approval && this.#state.isPermissionPatternApproved(approval)) {
-      if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) return;
       try {
-        await this.#runtimeFor(binding).gateway.replyPermission(
-          directory,
-          permission.sessionID,
-          permission.id,
-          "once",
-        );
-        this.#permissions.clear(hostId, permission.id);
-        this.#logger.info("permission.auto_allowed", "Approved permission pattern handled automatically", {
-          host_id: hostId,
-          session_id: permission.sessionID,
+        await this.#permissions.publish(hostId, permission, async () => {
+          if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
+            throw new StalePublicationError();
+          }
+          await this.#runtimeFor(binding).gateway.replyPermission(
+            directory,
+            permission.sessionID,
+            permission.id,
+            "once",
+          );
+          this.#logger.info(
+            "permission.auto_allowed",
+            "Approved permission pattern handled automatically",
+            {
+              host_id: hostId,
+              session_id: permission.sessionID,
+            },
+          );
         });
         return;
       } catch (error) {
+        if (error instanceof StalePublicationError) return;
         this.#logger.warn(
           "permission.auto_allow_failed",
           "Automatic permission reply failed; falling back to operator Ask",
@@ -1256,7 +1264,8 @@ export class Bridge {
     ) {
       this.#permissions.clear(binding.hostId, parsed.permissionId);
       await interaction.reply({
-        content: "This permission request changed after it was published. Review the new Ask instead.",
+        content:
+          "This permission request changed after it was published. Review the new Ask instead.",
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -1272,7 +1281,8 @@ export class Bridge {
       });
       if (!stored) {
         await interaction.reply({
-          content: "Allow always is unavailable because the upstream permission pattern is missing or invalid.",
+          content:
+            "Allow always is unavailable because the upstream permission pattern is missing or invalid.",
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -1285,7 +1295,9 @@ export class Bridge {
       parsed.permissionId,
       parsed.response === "always" ? "once" : parsed.response,
     );
-    this.#permissions.clear(binding.hostId, parsed.permissionId);
+    if (parsed.response !== "always") {
+      this.#permissions.clear(binding.hostId, parsed.permissionId);
+    }
     await interaction.update({
       content: `${interaction.message.content}\n\nResolved by <@${interaction.user.id}>: **${parsed.response}**`,
       components: [],
