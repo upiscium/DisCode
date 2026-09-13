@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionAuthorityResolver } from "../src/core/session-authority.js";
+import type { ExistingSession } from "../src/opencode/existing-session-gateway.js";
 
-function runtime(sessionOverrides: Record<string, unknown> = {}) {
+function runtime(sessionOverrides: Partial<ExistingSession> = {}) {
   const authorizeDirectory = vi.fn(async (directory: string) =>
     directory === "~/repo" ? "/home/upiscium/repo" : directory,
   );
-  const getSession = vi.fn(async (directory: string, sessionId: string) => ({
+  const getSession = vi.fn(async (directory: string, sessionId: string): Promise<ExistingSession> => ({
     hostId: "host-1",
     id: sessionId,
     directory,
@@ -53,14 +54,17 @@ describe("SessionAuthorityResolver", () => {
     ["host mismatch", { hostId: "host-2" }],
     ["session mismatch", { id: "other-session" }],
     ["directory mismatch", { directory: "/other" }],
-  ])("fails closed on %s", async (_label, overrides) => {
-    const host = runtime(overrides);
-    const resolver = new SessionAuthorityResolver({ get: () => host.value });
+  ] satisfies Array<[string, Partial<ExistingSession>]>) (
+    "fails closed on %s",
+    async (_label, overrides) => {
+      const host = runtime(overrides);
+      const resolver = new SessionAuthorityResolver({ get: () => host.value });
 
-    await expect(
-      resolver.resolve({ hostId: "host-1", directory: "/repo", sessionId: "ses-1" }),
-    ).rejects.toThrow(/identity changed/);
-  });
+      await expect(
+        resolver.resolve({ hostId: "host-1", directory: "/repo", sessionId: "ses-1" }),
+      ).rejects.toThrow(/identity changed/);
+    },
+  );
 
   it("rejects child sessions as mutable root authority", async () => {
     const host = runtime({ parentId: "root-session" });
