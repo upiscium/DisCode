@@ -1,5 +1,4 @@
 import type { ExistingSession } from "../opencode/existing-session-gateway.js";
-import type { OpenCodeHostRuntime } from "../opencode/host-runtime-registry.js";
 
 export type SessionAuthorityInput = Readonly<{
   hostId: string;
@@ -16,10 +15,15 @@ export type ResolvedSessionAuthority = Readonly<{
   model?: Readonly<{ providerID: string; modelID: string }>;
 }>;
 
-type SessionAuthorityRuntime = Pick<
-  OpenCodeHostRuntime,
-  "id" | "authorizeDirectory" | "existingSessions"
->;
+type SessionLookup = Readonly<{
+  getSession(directory: string, sessionId: string): Promise<ExistingSession>;
+}>;
+
+type SessionAuthorityRuntime = Readonly<{
+  id: string;
+  authorizeDirectory(directory: string): Promise<string>;
+  existingSessions: SessionLookup;
+}>;
 
 type SessionAuthorityHostRegistry = Readonly<{
   get(id: string): SessionAuthorityRuntime;
