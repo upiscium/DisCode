@@ -26,6 +26,7 @@ function fixture() {
       baseUrl: "http://127.0.0.1:4096",
       username: "METRICS_USER_SENTINEL",
       password: "PASSWORD_SENTINEL",
+      homeDirectory: "/private/HOME_DIRECTORY_SENTINEL",
     },
     sseMonitor: { status: () => "connected" as const },
   };
@@ -35,6 +36,7 @@ function fixture() {
       baseUrl: "http://10.12.0.2:4096",
       username: "SECOND_METRICS_USER_SENTINEL",
       password: "SECOND_PASSWORD_SENTINEL",
+      homeDirectory: "/private/SECOND_HOME_DIRECTORY_SENTINEL",
     },
     sseMonitor: { status: () => host2Sse },
   };
@@ -188,6 +190,8 @@ describe("PrometheusMetrics", () => {
       "SECOND_PASSWORD_SENTINEL",
       "METRICS_USER_SENTINEL",
       "SECOND_METRICS_USER_SENTINEL",
+      "HOME_DIRECTORY_SENTINEL",
+      "SECOND_HOME_DIRECTORY_SENTINEL",
       "127.0.0.1:4096",
       "10.12.0.2:4096",
       "ses_PRIVATE",

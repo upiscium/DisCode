@@ -1,8 +1,11 @@
+import { validateHomeDirectory } from "./host-directory-input.js";
+
 export type OpenCodeHostConfig = Readonly<{
   id: string;
   baseUrl: string;
   username: string;
   password?: string;
+  homeDirectory?: string;
   allowedRoots: readonly string[];
 }>;
 
@@ -28,9 +31,14 @@ export class HostRegistry {
       if (host.allowedRoots.length === 0) {
         throw new Error(`OpenCode host ${host.id} must contain at least one allowed root`);
       }
+      const homeDirectory = validateHomeDirectory(
+        host.homeDirectory,
+        `OpenCode host ${host.id} home directory`,
+      );
 
       const frozenHost: OpenCodeHostConfig = Object.freeze({
         ...host,
+        ...(homeDirectory ? { homeDirectory } : {}),
         allowedRoots: Object.freeze([...host.allowedRoots]),
       });
       entries.set(host.id, frozenHost);

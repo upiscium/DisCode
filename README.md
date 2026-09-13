@@ -6,7 +6,7 @@ OpenCode servers are the source of truth. Local or remote OpenCode servers keep 
 
 ## Behavior
 
-- `/oc start directory:<absolute-path> [host:<configured-id>] [model:<provider/model>] [agent:<name>] [title]` creates an OpenCode session and a Discord thread.
+- `/oc start directory:<path> [host:<configured-id>] [model:<provider/model>] [agent:<name>] [title]` creates an OpenCode session and a Discord thread. Directory inputs may be absolute or use the supported `~`/`~/...` form described below.
   - Omitting `host` uses the configured default host.
   - `host` accepts only stable IDs from the operator-configured host registry; Discord cannot supply an arbitrary URL.
   - `model` and `agent` are optional autocomplete values derived from the selected host and canonical allowed directory. They are revalidated against the current OpenCode catalog when the command executes.
@@ -40,8 +40,8 @@ Discord attachments can be sent to an idle bound session as OpenCode FileParts. 
 
 ### Existing-session discovery and binding
 
-- `/oc sessions directory:<absolute-path> [host:<configured-id>]` authorizes the directory on the selected host and then freshly lists current eligible OpenCode root sessions in that exact scope. The list is informational; it does not create a binding. It shows bounded title, session ID, status, update time, and bound/unbound state without exposing the canonical directory.
-- `/oc bind directory:<absolute-path> session:<autocomplete> [host:<configured-id>]` authorizes the requested directory, reads that exact session from the selected host, and creates a new Discord thread for it. It does not create, fork, or copy the OpenCode session and cannot accept an arbitrary host URL. The autocomplete value is a selector only and is never execution authority.
+- `/oc sessions directory:<path> [host:<configured-id>]` authorizes the directory on the selected host and then freshly lists current eligible OpenCode root sessions in that exact scope. The list is informational; it does not create a binding. It shows bounded title, session ID, status, update time, and bound/unbound state without exposing the canonical directory.
+- `/oc bind directory:<path> session:<autocomplete> [host:<configured-id>]` authorizes the requested directory, reads that exact session from the selected host, and creates a new Discord thread for it. It does not create, fork, or copy the OpenCode session and cannot accept an arbitrary host URL. The autocomplete value is a selector only and is never execution authority.
 - Bind eligibility is deliberately narrow: the session must be on the selected host, have the authorized canonical directory, be a root session (no parent), and be unarchived. A session already bound on that same host cannot be bound again. Host and session identity are treated as a pair, so equal IDs on different hosts are isolated.
 - Binding performs a fresh pre-bind read after directory authorization and a second fresh read after Discord thread creation, before claiming the persisted binding. Observational title/model/agent changes are accepted, but deletion, movement, reparenting, archiving, host/directory/ID mismatch, an existing binding, or any failed validation aborts the bind. The post-bind initialization refreshes the managed header, TODO and SubAgent panels, actual history, and pending requests from current OpenCode APIs.
 - Existing actual model/agent values are observed from current OpenCode history; they are not inferred as Bridge preferences. A newly bound existing session starts with Discord model/agent preference set to `(OpenCode default)`.
@@ -95,6 +95,26 @@ Discord is not a remote shell in this design.
 11. Pending Questions and permissions are never reconstructed from Discord history or persisted as Bridge authority. Startup/bind reconciliation and permission-button handling consult current APIs on the selected OpenCode host, and stale/resolved requests are rejected instead of replayed.
 12. Metrics are disabled by default and use a stricter low-cardinality policy than logs: session/thread IDs, paths, user/guild IDs, message content, URLs, usernames, and credentials are not metric labels or payload.
 13. Discord cannot provide provider endpoints, provider configuration, or provider credentials. Model/agent autocomplete is populated only from the selected host's current OpenCode catalog after directory authorization, and every explicit selection is revalidated against that same host and canonical directory at command execution and again immediately before prompt execution. A stale explicit selection never falls back silently to another model or agent.
+
+### Host home directories and tilde inputs
+
+Each configured host may define its host-side absolute POSIX home directory with
+TOML `home_directory`, JSON `homeDirectory`, or the legacy single-host
+environment variable `OPENCODE_HOME_DIRECTORY`. The explicitly selected host is the authority
+for expanding a directory input; when `host` is omitted, this means the
+configured default host. The Bridge process's own `HOME` is never used as a
+fallback.
+
+Only `~` and `~/...` are supported. `~user`, `$HOME`, `${HOME}`, shell
+substitution, and other shell/path expansion forms are not supported. Expansion
+happens before the selected remote host canonicalizes the path, checks that it is
+accessible, and verifies containment in that host's configured allowed roots.
+If the selected host has no configured home directory, a tilde input is rejected.
+After authorization, persisted bindings retain the host-returned canonical
+absolute path, never the tilde spelling.
+
+Home-directory configuration is operational path-resolution data only; it does
+not need to be exposed in logs, metrics, or diagnostics.
 
 `DISCORD_ALLOW_PERMISSION_ALWAYS` defaults to `false` because a persistent approval has a materially larger blast radius than a one-turn approval.
 
@@ -210,12 +230,14 @@ default_host = "local"
 base_url = "http://127.0.0.1:4096"
 username = "opencode"
 password_env = "OPENCODE_HOST_LOCAL_PASSWORD"
+home_directory = "/home/upiscium"
 allowed_roots = ["/home/upiscium/Documents/Programs"]
 
 [host.lab]
 base_url = "https://opencode.example.invalid"
 username = "opencode"
 password_env = "OPENCODE_HOST_LAB_PASSWORD"
+home_directory = "/home/opencode"
 allowed_roots = ["/srv/projects"]
 
 [logging]
@@ -254,6 +276,7 @@ and `OPENCODE_HOSTS_JSON` is unset:
 
 ```dotenv
 OPENCODE_ALLOWED_ROOTS=/home/upiscium/Documents/Programs
+OPENCODE_HOME_DIRECTORY=/home/upiscium
 OPENCODE_BASE_URL=http://127.0.0.1:4096
 OPENCODE_SERVER_USERNAME=opencode
 OPENCODE_SERVER_PASSWORD=<long-random-password>
@@ -267,7 +290,7 @@ For multi-host operation, configure a registry. The registry contains no passwor
 ```dotenv
 OPENCODE_HOST_LOCAL_PASSWORD=<local-password>
 OPENCODE_HOST_LAB_PASSWORD=<lab-password>
-OPENCODE_HOSTS_JSON={"defaultHost":"local","hosts":[{"id":"local","baseUrl":"http://127.0.0.1:4096","username":"opencode","passwordEnv":"OPENCODE_HOST_LOCAL_PASSWORD","allowedRoots":["/home/upiscium/Documents/Programs"]},{"id":"lab","baseUrl":"http://10.0.0.20:4096","username":"opencode","passwordEnv":"OPENCODE_HOST_LAB_PASSWORD","allowedRoots":["/srv/projects"]}]}
+OPENCODE_HOSTS_JSON={"defaultHost":"local","hosts":[{"id":"local","baseUrl":"http://127.0.0.1:4096","username":"opencode","passwordEnv":"OPENCODE_HOST_LOCAL_PASSWORD","homeDirectory":"/home/upiscium","allowedRoots":["/home/upiscium/Documents/Programs"]},{"id":"lab","baseUrl":"http://10.0.0.20:4096","username":"opencode","passwordEnv":"OPENCODE_HOST_LAB_PASSWORD","homeDirectory":"/home/opencode","allowedRoots":["/srv/projects"]}]}
 ```
 
 Host IDs are lowercase stable tokens. Duplicate IDs, unknown default hosts, non-HTTP(S) URLs, URL userinfo, empty root lists, missing password environment variables, and unknown JSON fields are rejected at startup.
@@ -403,10 +426,11 @@ npm start
 
 ### 5. Create Discord/OpenCode sessions
 
-Use the default host and OpenCode defaults:
+Use the default host and OpenCode defaults (absolute paths and `~`/`~/...` directory inputs are supported):
 
 ```text
 /oc start directory:/home/upiscium/Documents/Programs/Terreate title:Terreate
+/oc start directory:~/Documents/Programs/Terreate title:Terreate
 ```
 
 Or explicitly select a configured host plus a model/agent offered by autocomplete:

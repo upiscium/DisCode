@@ -25,6 +25,23 @@ contains no secret values. Optional Discord booleans default to `false`; `[loggi
 `[metrics]` defaults to `enabled = false`, `address = "127.0.0.1"`, and
 `port = 9464`. Host `base_url` is required and has no implicit loopback default.
 
+Each host may optionally define its host-side absolute POSIX home directory with
+TOML `home_directory`. The equivalent field in `OPENCODE_HOSTS_JSON` is
+`homeDirectory`; the legacy single-host equivalent is
+`OPENCODE_HOME_DIRECTORY`. These values are used only for the supported tilde
+forms in directory inputs. The explicitly selected host is authoritative (or
+the configured default host when `host` is omitted); the Bridge process's
+`HOME` is never a fallback. TOML from v0.2.0 that omits `home_directory` remains
+valid, and absolute directory inputs retain their existing meaning unchanged.
+
+Only `~` and `~/...` are expanded. `~user`, `$HOME`, `${HOME}`, shell
+substitution, and other shell expansion are not supported. Expansion precedes
+remote canonicalization, accessibility checks, and allowed-root containment
+checks; a tilde input is rejected when the selected host has no configured home.
+Once authorized, persisted bindings retain the canonical absolute path
+returned by the selected host, not the original tilde spelling. Home-directory
+values do not need to be included in logs, metrics, or diagnostics.
+
 Secret resolution is a separate runtime concern. `DISCORD_TOKEN` and every
 `password_env` reference resolve with the existing precedence:
 
@@ -87,9 +104,10 @@ The legacy single-host environment is projected as a registry containing host ID
 ## Primary flow
 
 ```text
-/oc start directory:<absolute> [host:<configured-id>] [model:<provider/model>] [agent:<name>]
+/oc start directory:<path> [host:<configured-id>] [model:<provider/model>] [agent:<name>]
   -> validate Discord user/guild
   -> resolve configured host (default if omitted)
+  -> expand only `~`/`~/...` using the selected host's configured home directory
   -> ask selected OpenCode host for canonical /path
   -> verify remote directory is accessible through OpenCode file API
   -> verify canonical directory within selected host allowed roots
@@ -140,11 +158,13 @@ The Bridge must not use its own filesystem to validate a path that belongs to an
 
 For every configured host, allowed-root authorization uses that OpenCode server itself as the canonicalization source:
 
-1. `GET /path?directory=<requested>` returns the host-side canonical `directory`.
-2. Existing paths are resolved by OpenCode through its filesystem realpath logic, so symlink targets are reflected in the canonical path.
-3. The Bridge requires both requested and canonical paths to be absolute.
-4. `GET /file?directory=<canonical>&path=.` confirms that the canonical directory exists and is accessible through OpenCode.
-5. The canonical directory is compared only against the selected host's configured allowed roots.
+1. Expand a leading `~` or `~/...` using the explicitly selected host's
+   configured home directory; do not use process `HOME` or shell expansion.
+2. `GET /path?directory=<expanded>` returns the host-side canonical `directory`.
+3. Existing paths are resolved by OpenCode through its filesystem realpath logic, so symlink targets are reflected in the canonical path.
+4. The Bridge requires both expanded and canonical paths to be absolute.
+5. `GET /file?directory=<canonical>&path=.` confirms that the canonical directory exists and is accessible through OpenCode.
+6. The canonical directory is compared only against the selected host's configured allowed roots.
 
 A path outside those roots, a symlink escape, an inaccessible path, or an invalid OpenCode response fails closed before session creation or selection autocomplete.
 
@@ -163,7 +183,8 @@ short-lived autocomplete cache
 ```text
 /oc bind host:<configured-id> directory:<requested> session:<id>
   -> resolve configured host (default only when host is omitted)
-  -> OpenCode GET /path: canonicalize directory on the selected host
+  -> expand only `~`/`~/...` using the selected host's configured home directory
+  -> OpenCode GET /path: canonicalize expanded directory on the selected host
   -> OpenCode GET /file for path=. at the canonical directory: require accessible exact directory
   -> first OpenCode session lookup at (host, canonical directory, exact session id)
   -> require host and exact id match

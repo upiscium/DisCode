@@ -19,12 +19,14 @@ base_url = "http://127.0.0.1:4096"
 username = "local"
 password_env = "OPENCODE_HOST_LOCAL_PASSWORD"
 allowed_roots = ["/tmp"]
+home_directory = "/srv/local"
 
 [host.remote]
 base_url = "https://remote.example.test/"
 username = "remote"
 password_env = "OPENCODE_HOST_REMOTE_PASSWORD"
 allowed_roots = ["/srv"]
+home_directory = "/srv/remote"
 `;
 
 const tempDirectories: string[] = [];
@@ -69,6 +71,7 @@ describe("TOML configuration", () => {
     expect(config.metricsEnabled).toBe(false);
     expect(config.metricsPort).toBe(9464);
     expect(JSON.stringify(config.hostRegistry)).not.toContain("OPENCODE_HOST_REMOTE_PASSWORD");
+    expect(config.hostRegistry.get("remote").homeDirectory).toBe("/srv/remote");
   });
 
   it("loads a single host using its table key as the persistent host ID", () => {
@@ -84,6 +87,18 @@ describe("TOML configuration", () => {
     expect(config.hostRegistry.list().map((host) => host.id)).toEqual(["local"]);
     expect(config.hostRegistry.defaultHost().id).toBe("local");
     expect(config.opencodePassword).toBe("local-secret");
+  });
+
+  it("allows TOML hosts without home_directory", () => {
+    const withoutHome = toml.replace(/\nhome_directory = "[^"]+"/g, "");
+    const config = loadConfig({
+      OCB_CONFIG_FILE: fileWith(withoutHome),
+      DISCORD_TOKEN: "runtime-token",
+      OPENCODE_HOST_LOCAL_PASSWORD: "local-secret",
+      OPENCODE_HOST_REMOTE_PASSWORD: "remote-secret",
+    });
+    expect(config.hostRegistry.get("local").homeDirectory).toBeUndefined();
+    expect(config.hostRegistry.get("remote").homeDirectory).toBeUndefined();
   });
 
   it("derives the exact password environment name from the host ID", () => {
@@ -244,6 +259,17 @@ port = 9999
         OPENCODE_HOST_REMOTE_PASSWORD: "remote",
       }),
     ).toThrow(/Default OpenCode host is not registered/);
+  });
+
+  it("requires TOML home_directory to be an absolute POSIX path", () => {
+    expect(() =>
+      parseTomlConfig(toml.replace('home_directory = "/srv/local"', 'home_directory = "~/local"')),
+    ).toThrow(/absolute POSIX path/);
+    expect(() =>
+      parseTomlConfig(
+        toml.replace('home_directory = "/srv/local"', 'home_directory = "/srv\\u0000local"'),
+      ),
+    ).toThrow(/absolute POSIX path/);
   });
 
   it("rejects missing and empty referenced passwords without leaking values", () => {

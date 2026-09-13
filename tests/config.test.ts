@@ -19,6 +19,7 @@ const registryJson = JSON.stringify({
       username: "opencode",
       passwordEnv: "OPENCODE_HOST_LOCAL_PASSWORD",
       allowedRoots: ["/tmp/local"],
+      homeDirectory: "/srv/local-user",
     },
     {
       id: "lab",
@@ -26,6 +27,7 @@ const registryJson = JSON.stringify({
       username: "bridge",
       passwordEnv: "OPENCODE_HOST_LAB_PASSWORD",
       allowedRoots: ["/srv/lab", "/srv/lab"],
+      homeDirectory: "/srv/lab-user",
     },
   ],
 });
@@ -54,6 +56,11 @@ describe("loadConfig", () => {
     expect(config.allowedRoots).toEqual(["/tmp/repos", "/srv/repos"]);
   });
 
+  it("loads the legacy home directory explicitly", () => {
+    const config = loadConfig({ ...baseEnv, OPENCODE_HOME_DIRECTORY: "/srv/legacy-user" });
+    expect(config.hostRegistry.defaultHost().homeDirectory).toBe("/srv/legacy-user");
+  });
+
   it("projects the configured default host into the existing single-host runtime view", () => {
     const config = loadConfig({
       DISCORD_TOKEN: "token",
@@ -72,6 +79,7 @@ describe("loadConfig", () => {
     expect(config.opencodeUsername).toBe("bridge");
     expect(config.opencodePassword).toBe("lab-secret");
     expect(config.allowedRoots).toEqual(["/srv/lab"]);
+    expect(config.hostRegistry.get("lab").homeDirectory).toBe("/srv/lab-user");
   });
 
   it("allows buffered assistant streaming to be enabled explicitly", () => {
@@ -106,6 +114,8 @@ describe("loadHostRegistry", () => {
     });
 
     expect(registry.get("local").password).toBe("local-secret");
+    expect(registry.get("local").homeDirectory).toBe("/srv/local-user");
+    expect(registry.get("lab").homeDirectory).toBe("/srv/lab-user");
     expect(JSON.stringify(registry)).not.toContain("OPENCODE_HOST_LOCAL_PASSWORD");
     expect(JSON.stringify(registry)).not.toContain("local-secret");
   });
@@ -139,6 +149,49 @@ describe("loadHostRegistry", () => {
       ],
     });
     expect(() => loadHostRegistry({ OPENCODE_HOSTS_JSON: withUnknown })).toThrow(/unknown field/);
+  });
+
+  it("accepts and validates per-host home directories", () => {
+    const registry = loadHostRegistry({
+      OPENCODE_HOSTS_JSON: JSON.stringify({
+        defaultHost: "local",
+        hosts: [
+          {
+            id: "local",
+            baseUrl: "http://127.0.0.1:4096",
+            username: "opencode",
+            allowedRoots: ["/tmp"],
+            homeDirectory: "/srv/local",
+          },
+        ],
+      }),
+    });
+    expect(registry.get("local").homeDirectory).toBe("/srv/local");
+    expect(() =>
+      loadHostRegistry({
+        OPENCODE_HOSTS_JSON: JSON.stringify({
+          defaultHost: "local",
+          hosts: [
+            {
+              id: "local",
+              baseUrl: "http://127.0.0.1:4096",
+              username: "opencode",
+              allowedRoots: ["/tmp"],
+              homeDirectory: "~/local",
+            },
+          ],
+        }),
+      }),
+    ).toThrow(/absolute POSIX path/);
+  });
+
+  it("rejects empty and relative legacy home directories", () => {
+    expect(() => loadHostRegistry({ ...baseEnv, OPENCODE_HOME_DIRECTORY: "" })).toThrow(
+      /OPENCODE_HOME_DIRECTORY/,
+    );
+    expect(() => loadHostRegistry({ ...baseEnv, OPENCODE_HOME_DIRECTORY: "relative" })).toThrow(
+      /absolute POSIX path/,
+    );
   });
 
   it("rejects missing password env, duplicate host IDs, and unknown defaults", () => {

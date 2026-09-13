@@ -137,6 +137,20 @@ describe("ExistingSessionRuntime sessions command", () => {
     expect(adam.authorizeDirectory).toHaveBeenCalledWith("/requested/repo");
   });
 
+  it("passes a tilde directory to the selected host authorizer and discovers its canonical scope", async () => {
+    const eve = host("eve", "/home/eve/repo");
+    const { runtime, discover } = runtimeFixture({ entries: { eve }, defaultHostId: "eve" });
+    const command = interaction({ hostId: "eve", directory: "~/repo" });
+
+    await runtime.handleSessionsCommand(command as never);
+
+    expect(eve.authorizeDirectory).toHaveBeenCalledWith("~/repo");
+    expect(discover).toHaveBeenCalledWith({
+      hostId: "eve",
+      canonicalDirectory: "/home/eve/repo",
+    });
+  });
+
   it("rejects an unknown explicit host without authorization or discovery", async () => {
     const adam = host("adam");
     const { runtime, discover } = runtimeFixture({ entries: { adam } });
@@ -248,6 +262,20 @@ describe("ExistingSessionRuntime bind autocomplete", () => {
     expect(autocomplete.respond).toHaveBeenCalledWith([
       expect.objectContaining({ value: "eligible" }),
     ]);
+  });
+
+  it("passes a tilde directory to the selected host authorizer for bind autocomplete", async () => {
+    const eve = host("eve", "/home/eve/repo");
+    const { runtime, discover } = runtimeFixture({ entries: { eve } });
+    const autocomplete = interaction({ hostId: "eve", directory: "~/repo" });
+
+    await runtime.handleBindAutocomplete(autocomplete as never);
+
+    expect(eve.authorizeDirectory).toHaveBeenCalledWith("~/repo");
+    expect(discover).toHaveBeenCalledWith({
+      hostId: "eve",
+      canonicalDirectory: "/home/eve/repo",
+    });
   });
 
   it.each([
