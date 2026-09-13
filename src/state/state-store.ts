@@ -64,7 +64,9 @@ export class StateStore {
             migrated = true;
             continue;
           }
-          if (approvedPermissionPatterns.some((item) => sameApprovedPermissionPattern(item, approval))) {
+          if (
+            approvedPermissionPatterns.some((item) => sameApprovedPermissionPattern(item, approval))
+          ) {
             migrated = true;
             continue;
           }
@@ -146,7 +148,8 @@ export class StateStore {
       const approvedPermissionPatterns = previousState.approvedPermissionPatterns.filter(
         (item) => item.hostId !== hostId || item.sessionId !== sessionId,
       );
-      const removed = previousState.approvedPermissionPatterns.length - approvedPermissionPatterns.length;
+      const removed =
+        previousState.approvedPermissionPatterns.length - approvedPermissionPatterns.length;
       if (removed === 0) return 0;
 
       const nextState: StateFile = { ...previousState, approvedPermissionPatterns };
@@ -225,11 +228,7 @@ export class StateStore {
     });
   }
 
-  async removeSessionState(
-    threadId: string,
-    hostId: string,
-    sessionId: string,
-  ): Promise<boolean> {
+  async removeSessionState(threadId: string, hostId: string, sessionId: string): Promise<boolean> {
     return this.#mutate(async () => {
       const current = this.#state.bindings[threadId];
       if (!current || current.hostId !== hostId || current.sessionId !== sessionId) {
