@@ -25,6 +25,10 @@ import { renderHealthDiagnostic } from "../discord/health.js";
 import { parseQuestionAnswers, renderQuestionAsk } from "../discord/question.js";
 import { selectionAutocomplete } from "../discord/selection-autocomplete.js";
 import { renderSessionStatus } from "../discord/status.js";
+import {
+  createApprovedPermissionPattern,
+  samePermissionPatternAuthority,
+} from "../domain/approved-permission-pattern.js";
 import type { SessionBinding } from "../domain/session-binding.js";
 import { type LoggerLike, noopLogger } from "../logging/logger.js";
 import { probeOpenCodeHostsHealth } from "../opencode/diagnostics.js";
@@ -45,10 +49,7 @@ import type { StateStore } from "../state/state-store.js";
 import { reconcilePendingAfterBind } from "./bind-pending-reconciliation.js";
 import { ExistingSessionBindRuntime } from "./existing-session-bind-runtime.js";
 import type { ExistingSessionCommandRuntime } from "./existing-session-runtime.js";
-import {
-  hasPendingPermissionRequest,
-  PermissionPublicationTracker,
-} from "./permission-publication.js";
+import { PermissionPublicationTracker } from "./permission-publication.js";
 import { reconcilePendingPermissions } from "./permission-reconciliation.js";
 import { QuestionPublicationTracker } from "./question-publication.js";
 import { reconcilePendingQuestions } from "./question-reconciliation.js";
@@ -688,7 +689,14 @@ export class Bridge {
       operation: async () => {
         await executeCloseMutation({
           deleteSession: () => runtime.gateway.deleteSession(binding.directory, binding.sessionId),
-          removeBinding: () => this.#state.remove(binding.threadId),
+          removeBinding: async () => {
+            const removed = await this.#state.removeSessionState(
+              binding.threadId,
+              binding.hostId,
+              binding.sessionId,
+            );
+            if (!removed) throw new Error("OpenCode session binding changed during close");
+          },
         });
         this.#subagentSync.forgetBinding(binding);
         this.#pendingQuestions.delete(sessionKey(binding.hostId, binding.sessionId));
@@ -890,9 +898,12 @@ export class Bridge {
     switch (event.type) {
       case "session.created":
       case "session.updated":
-      case "session.deleted":
       case "session.status":
         this.#subagentSync.applyEvent(hostId, directory, event);
+        break;
+      case "session.deleted":
+        this.#subagentSync.applyEvent(hostId, directory, event);
+        await this.#state.removeApprovedPermissionPatterns(hostId, event.properties.info.id);
         break;
       case "message.updated":
         if (event.properties.info.role === "user") {
@@ -1115,6 +1126,38 @@ export class Bridge {
     const binding = this.#state.getBySession(hostId, permission.sessionID);
     if (!binding || binding.directory !== directory) return;
 
+    const approval = createApprovedPermissionPattern({
+      hostId,
+      canonicalDirectory: directory,
+      sessionId: permission.sessionID,
+      permissionType: permission.type,
+      pattern: permission.pattern,
+    });
+    if (approval && this.#state.isPermissionPatternApproved(approval)) {
+      if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) return;
+      try {
+        await this.#runtimeFor(binding).gateway.replyPermission(
+          directory,
+          permission.sessionID,
+          permission.id,
+          "once",
+        );
+        this.#permissions.clear(hostId, permission.id);
+        this.#logger.info("permission.auto_allowed", "Approved permission pattern handled automatically", {
+          host_id: hostId,
+          session_id: permission.sessionID,
+        });
+        return;
+      } catch (error) {
+        this.#logger.warn(
+          "permission.auto_allow_failed",
+          "Automatic permission reply failed; falling back to operator Ask",
+          { host_id: hostId, session_id: permission.sessionID },
+          error,
+        );
+      }
+    }
+
     try {
       await this.#permissions.publish(hostId, permission, async () => {
         if (!samePublicationBinding(this.#state.getByThread(binding.threadId), binding)) {
@@ -1132,7 +1175,7 @@ export class Bridge {
             .setLabel("Allow once")
             .setStyle(ButtonStyle.Success),
         );
-        if (this.#config.allowPermissionAlways) {
+        if (this.#config.allowPermissionAlways && approval) {
           row.addComponents(
             new ButtonBuilder()
               .setCustomId(permissionCustomId("always", permission.sessionID, permission.id))
@@ -1194,12 +1237,10 @@ export class Bridge {
 
     const runtime = this.#runtimeFor(binding);
     const current = await runtime.gateway.listPermissions(binding.directory);
-    const stillPending = hasPendingPermissionRequest(
-      current,
-      parsed.sessionId,
-      parsed.permissionId,
+    const currentPermission = current.find(
+      (request) => request.sessionID === parsed.sessionId && request.id === parsed.permissionId,
     );
-    if (!stillPending) {
+    if (!currentPermission) {
       this.#permissions.clear(binding.hostId, parsed.permissionId);
       await interaction.reply({
         content: "This permission request is no longer pending for this thread.",
@@ -1207,12 +1248,42 @@ export class Bridge {
       });
       return;
     }
+    if (
+      !samePermissionPatternAuthority(
+        { permissionType: pending.type, pattern: pending.pattern },
+        { permissionType: currentPermission.type, pattern: currentPermission.pattern },
+      )
+    ) {
+      this.#permissions.clear(binding.hostId, parsed.permissionId);
+      await interaction.reply({
+        content: "This permission request changed after it was published. Review the new Ask instead.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (parsed.response === "always") {
+      const stored = await this.#state.approvePermissionPattern({
+        hostId: binding.hostId,
+        canonicalDirectory: binding.directory,
+        sessionId: binding.sessionId,
+        permissionType: currentPermission.type,
+        pattern: currentPermission.pattern,
+      });
+      if (!stored) {
+        await interaction.reply({
+          content: "Allow always is unavailable because the upstream permission pattern is missing or invalid.",
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+    }
 
     await runtime.gateway.replyPermission(
       binding.directory,
       parsed.sessionId,
       parsed.permissionId,
-      parsed.response,
+      parsed.response === "always" ? "once" : parsed.response,
     );
     this.#permissions.clear(binding.hostId, parsed.permissionId);
     await interaction.update({
@@ -1283,10 +1354,8 @@ function samePublicationBinding(
 }
 
 function permissionPatterns(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter((pattern): pattern is string => typeof pattern === "string");
-  }
-  return typeof value === "string" && value ? [value] : [];
+  if (!Array.isArray(value) || value.some((pattern) => typeof pattern !== "string")) return [];
+  return [...value] as string[];
 }
 
 function permissionCustomId(
