@@ -505,9 +505,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return [];
+  return [...value] as string[];
 }
 
 export function parseOpenCodeModelRef(value: string): OpenCodeModelSelection | undefined {

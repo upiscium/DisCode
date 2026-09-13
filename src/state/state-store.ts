@@ -1,5 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  type ApprovedPermissionPattern,
+  type ApprovedPermissionPatternInput,
+  createApprovedPermissionPattern,
+  normalizeApprovedPermissionPattern,
+  sameApprovedPermissionPattern,
+} from "../domain/approved-permission-pattern.js";
 import type { OpenCodeModelSelection, SessionBinding } from "../domain/session-binding.js";
 
 type PersistedSessionBinding = Omit<SessionBinding, "hostId"> & { hostId?: string };
@@ -7,14 +14,16 @@ type PersistedSessionBinding = Omit<SessionBinding, "hostId"> & { hostId?: strin
 type PersistedStateFile = {
   version: 1;
   bindings: Record<string, PersistedSessionBinding>;
+  approvedPermissionPatterns?: unknown;
 };
 
 type StateFile = {
   version: 1;
   bindings: Record<string, SessionBinding>;
+  approvedPermissionPatterns: ApprovedPermissionPattern[];
 };
 
-const emptyState = (): StateFile => ({ version: 1, bindings: {} });
+const emptyState = (): StateFile => ({ version: 1, bindings: {}, approvedPermissionPatterns: [] });
 
 export class StateStore {
   readonly #path: string;
@@ -44,7 +53,30 @@ export class StateStore {
           return [threadId, { ...binding, hostId } satisfies SessionBinding];
         }),
       );
-      this.#state = { version: 1, bindings };
+
+      const approvedPermissionPatterns: ApprovedPermissionPattern[] = [];
+      if (parsed.approvedPermissionPatterns === undefined) {
+        migrated = true;
+      } else if (Array.isArray(parsed.approvedPermissionPatterns)) {
+        for (const rawApproval of parsed.approvedPermissionPatterns) {
+          const approval = normalizeApprovedPermissionPattern(rawApproval);
+          if (!approval) {
+            migrated = true;
+            continue;
+          }
+          if (
+            approvedPermissionPatterns.some((item) => sameApprovedPermissionPattern(item, approval))
+          ) {
+            migrated = true;
+            continue;
+          }
+          approvedPermissionPatterns.push(approval);
+        }
+      } else {
+        migrated = true;
+      }
+
+      this.#state = { version: 1, bindings, approvedPermissionPatterns };
       if (migrated) await this.#persist();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -71,6 +103,67 @@ export class StateStore {
     return Object.values(this.#state.bindings).map((item) => ({ ...item }));
   }
 
+  isPermissionPatternApproved(input: ApprovedPermissionPatternInput): boolean {
+    const candidate = createApprovedPermissionPattern(input);
+    return (
+      candidate !== undefined &&
+      this.#state.approvedPermissionPatterns.some((item) =>
+        sameApprovedPermissionPattern(item, candidate),
+      )
+    );
+  }
+
+  async approvePermissionPattern(input: ApprovedPermissionPatternInput): Promise<boolean> {
+    const candidate = createApprovedPermissionPattern(input);
+    if (!candidate) return false;
+
+    return this.#mutate(async () => {
+      if (
+        this.#state.approvedPermissionPatterns.some((item) =>
+          sameApprovedPermissionPattern(item, candidate),
+        )
+      ) {
+        return true;
+      }
+
+      const previousState = this.#state;
+      const nextState: StateFile = {
+        ...previousState,
+        approvedPermissionPatterns: [...previousState.approvedPermissionPatterns, candidate],
+      };
+      this.#state = nextState;
+      try {
+        await this.#persist(nextState);
+        return true;
+      } catch (error) {
+        this.#state = previousState;
+        throw error;
+      }
+    });
+  }
+
+  async removeApprovedPermissionPatterns(hostId: string, sessionId: string): Promise<number> {
+    return this.#mutate(async () => {
+      const previousState = this.#state;
+      const approvedPermissionPatterns = previousState.approvedPermissionPatterns.filter(
+        (item) => item.hostId !== hostId || item.sessionId !== sessionId,
+      );
+      const removed =
+        previousState.approvedPermissionPatterns.length - approvedPermissionPatterns.length;
+      if (removed === 0) return 0;
+
+      const nextState: StateFile = { ...previousState, approvedPermissionPatterns };
+      this.#state = nextState;
+      try {
+        await this.#persist(nextState);
+        return removed;
+      } catch (error) {
+        this.#state = previousState;
+        throw error;
+      }
+    });
+  }
+
   async put(binding: SessionBinding): Promise<void> {
     await this.#mutate(async () => {
       this.#state.bindings[binding.threadId] = { ...binding };
@@ -89,7 +182,7 @@ export class StateStore {
 
       const previousState = this.#state;
       const nextState: StateFile = {
-        version: 1,
+        ...previousState,
         bindings: {
           ...previousState.bindings,
           [binding.threadId]: { ...binding },
@@ -119,9 +212,37 @@ export class StateStore {
 
       const previousState = this.#state;
       const nextState: StateFile = {
-        version: 1,
+        ...previousState,
         bindings: Object.fromEntries(
           Object.entries(previousState.bindings).filter(([key]) => key !== threadId),
+        ),
+      };
+      this.#state = nextState;
+      try {
+        await this.#persist(nextState);
+        return true;
+      } catch (error) {
+        this.#state = previousState;
+        throw error;
+      }
+    });
+  }
+
+  async removeSessionState(threadId: string, hostId: string, sessionId: string): Promise<boolean> {
+    return this.#mutate(async () => {
+      const current = this.#state.bindings[threadId];
+      if (!current || current.hostId !== hostId || current.sessionId !== sessionId) {
+        return false;
+      }
+
+      const previousState = this.#state;
+      const nextState: StateFile = {
+        ...previousState,
+        bindings: Object.fromEntries(
+          Object.entries(previousState.bindings).filter(([key]) => key !== threadId),
+        ),
+        approvedPermissionPatterns: previousState.approvedPermissionPatterns.filter(
+          (item) => item.hostId !== hostId || item.sessionId !== sessionId,
         ),
       };
       this.#state = nextState;
