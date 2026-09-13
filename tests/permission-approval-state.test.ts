@@ -48,12 +48,16 @@ describe("StateStore permission approvals", () => {
     await reloaded.load();
     expect(reloaded.isPermissionPatternApproved(approval)).toBe(true);
     expect(reloaded.isPermissionPatternApproved({ ...approval, hostId: "host-2" })).toBe(false);
-    expect(reloaded.isPermissionPatternApproved({ ...approval, canonicalDirectory: "/other" })).toBe(
+    expect(
+      reloaded.isPermissionPatternApproved({ ...approval, canonicalDirectory: "/other" }),
+    ).toBe(false);
+    expect(reloaded.isPermissionPatternApproved({ ...approval, sessionId: "ses-2" })).toBe(false);
+    expect(reloaded.isPermissionPatternApproved({ ...approval, permissionType: "read" })).toBe(
       false,
     );
-    expect(reloaded.isPermissionPatternApproved({ ...approval, sessionId: "ses-2" })).toBe(false);
-    expect(reloaded.isPermissionPatternApproved({ ...approval, permissionType: "read" })).toBe(false);
-    expect(reloaded.isPermissionPatternApproved({ ...approval, pattern: ["ssh -p *"] })).toBe(false);
+    expect(reloaded.isPermissionPatternApproved({ ...approval, pattern: ["ssh -p *"] })).toBe(
+      false,
+    );
     expect(reloaded.isPermissionPatternApproved({ ...approval, pattern: ["ssh  *"] })).toBe(false);
   });
 
