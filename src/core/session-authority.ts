@@ -42,12 +42,16 @@ export class SessionAuthorityResolver {
     }
 
     const runtime = this.#hosts.get(input.hostId);
+    if (runtime.id !== input.hostId) {
+      throw new Error("OpenCode host identity changed during authority resolution");
+    }
+
     const canonicalDirectory = await runtime.authorizeDirectory(input.directory);
     const session = await runtime.existingSessions.getSession(canonicalDirectory, input.sessionId);
-    assertExactRootSession(runtime.id, canonicalDirectory, input.sessionId, session);
+    assertExactRootSession(input.hostId, canonicalDirectory, input.sessionId, session);
 
     return {
-      hostId: runtime.id,
+      hostId: input.hostId,
       canonicalDirectory,
       sessionId: session.id,
       ...(session.title ? { title: session.title } : {}),
